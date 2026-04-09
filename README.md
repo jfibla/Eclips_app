@@ -89,6 +89,14 @@ Desenvolupat per **Joan Fibla**
 
 ---
 
-## 📜 Llicència
+## 📜 Llicència MIT
 
-(Pendent d’afegir, opcional — per exemple MIT)
+Aquest projecte està sota la llicència MIT.
+
+Copyright (c) 2026 Joan Fibla
+
+Es concedeix permís, gratuïtament, a qualsevol persona que obtingui una còpia d'aquest programari i dels fitxers de documentació associats (el "Programari"), per utilitzar el Programari sense restriccions, incloent-hi, sense limitació, els drets d'ús, còpia, modificació, fusió, publicació, distribució, sublicència i/o venda de còpies del Programari, i permetre a les persones a qui es proporcioni el Programari fer-ho, subjecte a les següents condicions:
+
+El copyright anterior i aquest avís de permís s'han d'incloure en totes les còpies o parts substancials del Programari.
+
+EL PROGRAMARI ES PROPORCIONA "TAL QUAL", SENSE GARANTIA DE CAP TIPUS, EXPRESSA O IMPLÍCITA, INCLOENT-HI, PERÒ SENSE LIMITAR-S'HI, LES GARANTIES DE COMERCIALITZACIÓ, ADEQUACIÓ A UN PROPÒSIT PARTICULAR I NO INFRACCIÓ. EN CAP CAS ELS AUTORS O ELS TITULARS DEL COPYRIGHT SERAN RESPONSABLES DE CAP RECLAMACIÓ, DANYS O ALTRES RESPONSABILITATS, JA SIGUI EN UNA ACCIÓ DE CONTRACTE, RESPONSABILITAT CIVIL O ALTRE, DERIVADA DE, FORA DE O EN RELACIÓ AMB EL PROGRAMARI O L'ÚS O ALTRES TRACTES AMB EL PROGRAMARI.
