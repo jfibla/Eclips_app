@@ -881,8 +881,14 @@ ui <- fluidPage(
         ),
         
         div(
+          div(
+            class = "section-card tight-btn download-btn",
+            actionButton("calc_sun", "Calcular posició del Sol", class = "btn-primary"),
+            downloadButton("download_marked", "Descarregar imatge marcada")
+          ),
+          tags$br(),
           class = "section-card tight-btn",
-          h4(class = "section-title", "6. Ajust fi"),
+          h4(class = "section-title", "6. Ajusta la posició del sol (opcional)"),
           tags$div(
             class = "help-text-small",
             "Offset X i Offset Y són ajustos manuals en píxels per moure la posició dibuixada del Sol sobre la foto, sense canviar el càlcul astronòmic del Sol."
@@ -897,11 +903,6 @@ ui <- fluidPage(
             "Desplaçament amunt/avall"
           ),
           numericInput("y_offset", "Offset Y (px)", value = 0, step = 1),
-          div(
-            class = "section-card tight-btn download-btn",
-            actionButton("calc_sun", "Calcular posició del Sol", class = "btn-primary"),
-            downloadButton("download_marked", "Descarregar imatge marcada")
-          )
         )
       )
     ),
