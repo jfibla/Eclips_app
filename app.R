@@ -658,7 +658,7 @@ ui <- fluidPage(
     "))
   ),
   
-  titlePanel("Eclips'app"),
+  titlePanel("🌘 Eclips'app"),
   tags$div(
     style = paste(
       "background-color:#f8f9fa;",
