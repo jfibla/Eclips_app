@@ -1,0 +1,1474 @@
+# app.R
+# ============================================================
+# Shiny app v3 amb lectura automàtica de metadades EXIF
+# ============================================================
+
+library(shiny)
+library(magick)
+library(png)
+library(jpeg)
+library(exifr)
+library(shinyjs)
+
+# ============================================================
+# FUNCIONS BÀSIQUES
+# ============================================================
+
+deg2rad <- function(x) x * pi / 180
+rad2deg <- function(x) x * 180 / pi
+
+wrap360 <- function(x) {
+  x <- x %% 360
+  ifelse(x < 0, x + 360, x)
+}
+
+wrap180 <- function(x) {
+  y <- ((x + 180) %% 360) - 180
+  ifelse(y == -180, 180, y)
+}
+
+rotate_point <- function(x, y, cx, cy, angle_deg) {
+  a <- deg2rad(angle_deg)
+  xr <- cos(a) * (x - cx) - sin(a) * (y - cy) + cx
+  yr <- sin(a) * (x - cx) + cos(a) * (y - cy) + cy
+  list(x = xr, y = yr)
+}
+
+read_image_array <- function(path) {
+  ext <- tolower(tools::file_ext(path))
+  if (ext %in% c("png")) {
+    png::readPNG(path)
+  } else {
+    jpeg::readJPEG(path)
+  }
+}
+
+read_image_dims <- function(path) {
+  info <- magick::image_info(magick::image_read(path))
+  list(width = info$width[1], height = info$height[1])
+}
+
+# ============================================================
+# EXIF
+# ============================================================
+
+safe_first_nonempty <- function(x) {
+  if (is.null(x) || !length(x)) return(NA)
+  x <- x[!is.na(x) & nzchar(trimws(as.character(x)))]
+  if (!length(x)) return(NA)
+  x[1]
+}
+
+parse_exif_coord <- function(value, ref = NA) {
+  if (is.null(value) || length(value) == 0 || all(is.na(value))) return(NA_real_)
+  
+  v <- value[1]
+  
+  # Si ja és numèric
+  if (is.numeric(v)) {
+    out <- as.numeric(v)
+    if (!is.na(ref)) {
+      ref <- toupper(trimws(as.character(ref[1])))
+      if (ref %in% c("S", "W")) out <- -abs(out)
+      if (ref %in% c("N", "E")) out <- abs(out)
+    }
+    return(out)
+  }
+  
+  s <- trimws(as.character(v))
+  if (!nzchar(s)) return(NA_real_)
+  
+  # Intent directe
+  num_direct <- suppressWarnings(as.numeric(s))
+  if (!is.na(num_direct)) {
+    out <- num_direct
+    if (!is.na(ref)) {
+      ref <- toupper(trimws(as.character(ref[1])))
+      if (ref %in% c("S", "W")) out <- -abs(out)
+      if (ref %in% c("N", "E")) out <- abs(out)
+    }
+    return(out)
+  }
+  
+  # Format tipus 41 deg 27' 53.00" N
+  nums <- suppressWarnings(as.numeric(unlist(regmatches(
+    s,
+    gregexpr("[0-9]+\\.?[0-9]*", s)
+  ))))
+  
+  if (length(nums) >= 1) {
+    deg <- nums[1]
+    minv <- if (length(nums) >= 2) nums[2] else 0
+    sec <- if (length(nums) >= 3) nums[3] else 0
+    
+    out <- deg + minv / 60 + sec / 3600
+    
+    ref_all <- paste0(
+      toupper(s),
+      " ",
+      ifelse(is.na(ref), "", toupper(trimws(as.character(ref[1]))))
+    )
+    
+    if (grepl("\\bS\\b|\\bW\\b", ref_all)) out <- -abs(out)
+    if (grepl("\\bN\\b|\\bE\\b", ref_all)) out <- abs(out)
+    
+    return(out)
+  }
+  
+  NA_real_
+}
+
+parse_exif_altitude <- function(value, ref = NA) {
+  if (is.null(value) || length(value) == 0 || all(is.na(value))) return(NA_real_)
+  
+  v <- value[1]
+  
+  if (is.numeric(v)) {
+    alt <- as.numeric(v)
+  } else {
+    s <- trimws(as.character(v))
+    nums <- suppressWarnings(as.numeric(unlist(regmatches(
+      s,
+      gregexpr("-?[0-9]+\\.?[0-9]*", s)
+    ))))
+    alt <- if (length(nums)) nums[1] else NA_real_
+  }
+  
+  if (is.na(alt)) return(NA_real_)
+  
+  if (!is.na(ref)) {
+    r <- trimws(as.character(ref[1]))
+    # En alguns EXIF: 0 = sobre nivell del mar, 1 = sota nivell del mar
+    if (r %in% c("1", "Below Sea Level")) alt <- -abs(alt)
+  }
+  
+  alt
+}
+
+parse_exif_datetime <- function(value) {
+  if (is.null(value) || length(value) == 0 || all(is.na(value))) return(NA)
+  
+  s <- trimws(as.character(value[1]))
+  if (!nzchar(s)) return(NA)
+  
+  # Format típic EXIF: 2026:08:12 20:00:00
+  s2 <- sub("^([0-9]{4}):([0-9]{2}):([0-9]{2}) ", "\\1-\\2-\\3 ", s)
+  
+  # Retornem text ja normalitzat
+  s2
+}
+
+read_photo_exif_summary <- function(path) {
+  out <- list(
+    ok = FALSE,
+    lat = NA_real_,
+    lon = NA_real_,
+    elev = NA_real_,
+    datetime = NA_character_,
+    device = NA_character_,
+    focal = NA_character_,
+    raw = NULL,
+    message = "No EXIF available."
+  )
+  
+  if (is.null(path) || !nzchar(path) || !file.exists(path)) {
+    out$message <- "Image file not found."
+    return(out)
+  }
+  
+  exif_df <- tryCatch(
+    exifr::read_exif(path),
+    error = function(e) NULL
+  )
+  
+  if (is.null(exif_df) || !is.data.frame(exif_df) || nrow(exif_df) == 0) {
+    out$message <- "No readable EXIF metadata found."
+    return(out)
+  }
+  
+  row <- exif_df[1, , drop = FALSE]
+  nm <- names(row)
+  
+  get_col <- function(candidates) {
+    hit <- intersect(candidates, nm)
+    if (!length(hit)) return(NA)
+    row[[hit[1]]]
+  }
+  
+  lat_val <- get_col(c("GPSLatitude", "Composite:GPSLatitude", "EXIF:GPSLatitude"))
+  lat_ref <- get_col(c("GPSLatitudeRef", "Composite:GPSLatitudeRef", "EXIF:GPSLatitudeRef"))
+  
+  lon_val <- get_col(c("GPSLongitude", "Composite:GPSLongitude", "EXIF:GPSLongitude"))
+  lon_ref <- get_col(c("GPSLongitudeRef", "Composite:GPSLongitudeRef", "EXIF:GPSLongitudeRef"))
+  
+  alt_val <- get_col(c("GPSAltitude", "Composite:GPSAltitude", "EXIF:GPSAltitude"))
+  alt_ref <- get_col(c("GPSAltitudeRef", "Composite:GPSAltitudeRef", "EXIF:GPSAltitudeRef"))
+  
+  dt_val <- get_col(c(
+    "DateTimeOriginal",
+    "EXIF:DateTimeOriginal",
+    "CreateDate",
+    "EXIF:CreateDate",
+    "DateTimeDigitized",
+    "EXIF:DateTimeDigitized"
+  ))
+  
+  make_val <- safe_first_nonempty(get_col(c("Make", "EXIF:Make")))
+  model_val <- safe_first_nonempty(get_col(c("Model", "EXIF:Model")))
+  focal_val <- safe_first_nonempty(get_col(c("FocalLength", "EXIF:FocalLength")))
+  
+  lat_num <- parse_exif_coord(lat_val, lat_ref)
+  lon_num <- parse_exif_coord(lon_val, lon_ref)
+  alt_num <- parse_exif_altitude(alt_val, alt_ref)
+  dt_txt  <- parse_exif_datetime(dt_val)
+  
+  device_txt <- paste(na.omit(c(make_val, model_val)), collapse = " ")
+  if (!nzchar(device_txt)) device_txt <- NA_character_
+  
+  msg_parts <- c()
+  if (!is.na(lat_num) && !is.na(lon_num)) {
+    msg_parts <- c(msg_parts, sprintf("GPS found: %.6f, %.6f", lat_num, lon_num))
+  }
+  if (!is.na(alt_num)) {
+    msg_parts <- c(msg_parts, sprintf("Altitude found: %.1f m", alt_num))
+  }
+  if (!is.na(dt_txt)) {
+    msg_parts <- c(msg_parts, paste("Date/time found:", dt_txt))
+  }
+  if (!is.na(device_txt)) {
+    msg_parts <- c(msg_parts, paste("Device:", device_txt))
+  }
+  
+  out$ok <- length(msg_parts) > 0
+  out$lat <- lat_num
+  out$lon <- lon_num
+  out$elev <- alt_num
+  out$datetime <- dt_txt
+  out$device <- device_txt
+  out$focal <- focal_val
+  out$raw <- exif_df
+  out$message <- if (length(msg_parts)) paste(msg_parts, collapse = " | ") else "No useful EXIF fields found."
+  
+  out
+}
+
+# ============================================================
+# CÀLCUL ASTRONÒMIC
+# ============================================================
+
+julian_day <- function(time_utc) {
+  y  <- as.integer(format(time_utc, "%Y", tz = "UTC"))
+  m  <- as.integer(format(time_utc, "%m", tz = "UTC"))
+  d  <- as.integer(format(time_utc, "%d", tz = "UTC"))
+  hh <- as.numeric(format(time_utc, "%H", tz = "UTC"))
+  mm <- as.numeric(format(time_utc, "%M", tz = "UTC"))
+  ss <- as.numeric(format(time_utc, "%S", tz = "UTC"))
+  
+  frac_day <- (hh + mm / 60 + ss / 3600) / 24
+  
+  idx <- m <= 2
+  y[idx] <- y[idx] - 1
+  m[idx] <- m[idx] + 12
+  
+  A <- floor(y / 100)
+  B <- 2 - A + floor(A / 4)
+  
+  jd <- floor(365.25 * (y + 4716)) +
+    floor(30.6001 * (m + 1)) +
+    d + frac_day + B - 1524.5
+  
+  jd
+}
+
+solar_position <- function(datetime_local, tz_string, lat_deg, lon_deg) {
+  time_local <- as.POSIXct(datetime_local, tz = tz_string)
+  time_utc   <- as.POSIXct(format(time_local, tz = "UTC", usetz = TRUE), tz = "UTC")
+  
+  JD <- julian_day(time_utc)
+  T  <- (JD - 2451545.0) / 36525
+  
+  L0 <- wrap360(280.46646 + T * (36000.76983 + T * 0.0003032))
+  M  <- wrap360(357.52911 + T * (35999.05029 - 0.0001537 * T))
+  
+  C <- sin(deg2rad(M)) * (1.914602 - T * (0.004817 + 0.000014 * T)) +
+    sin(deg2rad(2 * M)) * (0.019993 - 0.000101 * T) +
+    sin(deg2rad(3 * M)) * 0.000289
+  
+  true_long <- L0 + C
+  
+  omega  <- 125.04 - 1934.136 * T
+  lambda <- true_long - 0.00569 - 0.00478 * sin(deg2rad(omega))
+  
+  epsilon0 <- 23 +
+    (26 + ((21.448 - T * (46.815 + T * (0.00059 - T * 0.001813))) / 60)) / 60
+  epsilon <- epsilon0 + 0.00256 * cos(deg2rad(omega))
+  
+  alpha <- rad2deg(atan2(
+    cos(deg2rad(epsilon)) * sin(deg2rad(lambda)),
+    cos(deg2rad(lambda))
+  ))
+  alpha <- wrap360(alpha)
+  
+  delta <- rad2deg(asin(
+    sin(deg2rad(epsilon)) * sin(deg2rad(lambda))
+  ))
+  
+  GMST <- wrap360(
+    280.46061837 +
+      360.98564736629 * (JD - 2451545.0) +
+      0.000387933 * T^2 -
+      T^3 / 38710000
+  )
+  
+  LST <- wrap360(GMST + lon_deg)
+  H   <- wrap180(LST - alpha)
+  
+  lat_rad <- deg2rad(lat_deg)
+  dec_rad <- deg2rad(delta)
+  H_rad   <- deg2rad(H)
+  
+  alt_rad <- asin(
+    sin(lat_rad) * sin(dec_rad) +
+      cos(lat_rad) * cos(dec_rad) * cos(H_rad)
+  )
+  alt_deg <- rad2deg(alt_rad)
+  
+  az_rad <- atan2(
+    sin(H_rad),
+    cos(H_rad) * sin(lat_rad) - tan(dec_rad) * cos(lat_rad)
+  )
+  
+  az_deg <- wrap360(rad2deg(az_rad) + 180)
+  
+  list(
+    azimuth = az_deg,
+    altitude = alt_deg,
+    datetime_local = time_local,
+    datetime_utc = time_utc
+  )
+}
+
+# ============================================================
+# MODE DEMO
+# ============================================================
+
+create_demo_image <- function(path, w = 1400, h = 900) {
+  grDevices::png(filename = path, width = w, height = h, bg = "white")
+  op <- par(mar = c(0, 0, 0, 0), xaxs = "i", yaxs = "i")
+  on.exit({
+    par(op)
+    dev.off()
+  }, add = TRUE)
+  
+  plot.new()
+  plot.window(xlim = c(0, w), ylim = c(h, 0))
+  
+  horizon_y <- h * 0.58
+  
+  rect(0, 0, w, h, col = "#88BDE6", border = NA)
+  rect(0, horizon_y, w, h, col = "#B7A17A", border = NA)
+  
+  polygon(c(0, 180, 360), c(horizon_y, horizon_y - 180, horizon_y), col = "#6D7B5D", border = NA)
+  polygon(c(250, 520, 760), c(horizon_y, horizon_y - 260, horizon_y), col = "#5F6B4F", border = NA)
+  polygon(c(650, 980, 1280), c(horizon_y, horizon_y - 210, horizon_y), col = "#6D7B5D", border = NA)
+  polygon(c(1120, 1260, w), c(horizon_y, horizon_y - 120, horizon_y), col = "#758463", border = NA)
+  
+  text(
+    x = 25, y = 40,
+    labels = "DEMO IMAGE",
+    adj = c(0, 0),
+    col = "white",
+    cex = 1.6,
+    font = 2
+  )
+  
+  text(
+    x = 25, y = 78,
+    labels = "Use this image to test horizon clicks and sun projection",
+    adj = c(0, 0),
+    col = "white",
+    cex = 1
+  )
+  
+  invisible(path)
+}
+
+# ============================================================
+# PROJECCIÓ
+# ============================================================
+
+sun_to_image_xy <- function(
+    sun_az, sun_alt,
+    photo_center_az,
+    photo_pitch = 0,
+    hfov = 60,
+    vfov = 40,
+    img_width,
+    img_height,
+    roll_deg = 0
+) {
+  dx_deg <- wrap180(sun_az - photo_center_az)
+  dy_deg <- sun_alt - photo_pitch
+  
+  x0 <- (dx_deg / hfov + 0.5) * img_width
+  y0 <- (0.5 - dy_deg / vfov) * img_height
+  
+  rot <- rotate_point(
+    x = x0,
+    y = y0,
+    cx = img_width / 2,
+    cy = img_height / 2,
+    angle_deg = roll_deg
+  )
+  
+  inside <- (
+    rot$x >= 0 && rot$x <= img_width &&
+      rot$y >= 0 && rot$y <= img_height
+  )
+  
+  list(
+    x_raw = x0,
+    y_raw = y0,
+    x = rot$x,
+    y = rot$y,
+    inside = inside,
+    dx_deg = dx_deg,
+    dy_deg = dy_deg
+  )
+}
+
+# ============================================================
+# DIBUIX D'OVERLAY
+# ============================================================
+
+draw_overlay_image <- function(
+    img_path,
+    out_path,
+    sun_pt = NULL,
+    sun_label = NULL,
+    horizon_pts = NULL,
+    horizon_center_pt = NULL,
+    click_pt = NULL,
+    manual_pt = NULL,
+    show_grid = FALSE,
+    show_center_cross = TRUE
+) {
+  dims <- read_image_dims(img_path)
+  w <- dims$width
+  h <- dims$height
+  img_arr <- read_image_array(img_path)
+  
+  grDevices::png(filename = out_path, width = w, height = h, bg = "white")
+  op <- par(mar = c(0, 0, 0, 0), xaxs = "i", yaxs = "i")
+  on.exit({
+    par(op)
+    dev.off()
+  }, add = TRUE)
+  
+  plot.new()
+  plot.window(xlim = c(0, w), ylim = c(h, 0))
+  rasterImage(img_arr, 0, h, w, 0)
+  
+  if (isTRUE(show_grid)) {
+    xs <- seq(0, w, length.out = 11)
+    ys <- seq(0, h, length.out = 11)
+    abline(v = xs, col = "yellow", lty = 2, lwd = 1.5)
+    abline(h = ys, col = "yellow", lty = 2, lwd = 1.5)
+  }
+  
+  if (isTRUE(show_center_cross)) {
+    segments(w / 2 - 25, h / 2, w / 2 + 25, h / 2, col = "#FFFFFFAA", lwd = 2)
+    segments(w / 2, h / 2 - 25, w / 2, h / 2 + 25, col = "#FFFFFFAA", lwd = 2)
+    text(w / 2 + 30, h / 2 - 10, labels = "Centre", col = "white", pos = 4)
+  }
+  
+  if (!is.null(horizon_pts) && nrow(horizon_pts) == 2) {
+    segments(
+      horizon_pts$x[1], horizon_pts$y[1],
+      horizon_pts$x[2], horizon_pts$y[2],
+      col = "#00FFFF", lwd = 3
+    )
+    points(horizon_pts$x, horizon_pts$y, pch = 21, bg = "#00FFFF", col = "black", cex = 1.5)
+    text(mean(horizon_pts$x), mean(horizon_pts$y) - 15,
+         labels = "Horizon line", col = "#00FFFF", font = 2)
+  }
+  
+  if (!is.null(horizon_center_pt)) {
+    points(horizon_center_pt$x, horizon_center_pt$y, pch = 21, bg = "#00FF66", col = "black", cex = 1.5)
+    text(horizon_center_pt$x + 10, horizon_center_pt$y - 10,
+         labels = "Central horizon ref",
+         col = "#00FF66", pos = 4, font = 2)
+  }
+  
+  if (!is.null(click_pt)) {
+    points(click_pt$x, click_pt$y, pch = 4, col = "white", cex = 1.7, lwd = 2)
+    text(click_pt$x + 10, click_pt$y - 10,
+         labels = sprintf("Click (%.0f, %.0f)", click_pt$x, click_pt$y),
+         col = "white", pos = 4)
+  }
+  
+  if (!is.null(manual_pt)) {
+    points(manual_pt$x, manual_pt$y, pch = 21, bg = "#FF66CC", col = "black", cex = 1.5)
+    text(manual_pt$x + 10, manual_pt$y - 10,
+         labels = "Manual marker",
+         col = "#FF66CC", pos = 4, font = 2)
+  }
+  
+  if (!is.null(sun_pt)) {
+    symbols(
+      x = sun_pt$x, y = sun_pt$y,
+      circles = 14,
+      inches = FALSE, add = TRUE,
+      bg = "#FFD700AA", fg = "black", lwd = 2.5
+    )
+    if (!is.null(sun_label) && nzchar(sun_label)) {
+      text(sun_pt$x + 14, sun_pt$y - 14,
+           labels = sun_label, col = "yellow", pos = 4, font = 2, cex = 1.8)
+    }
+  }
+  
+  invisible(out_path)
+}
+
+field_box <- function(id, state = c("ok", "missing", "exif"), label, input_tag) {
+  state <- match.arg(state)
+  
+  cls <- switch(
+    state,
+    ok = "field-ok",
+    missing = "field-missing",
+    exif = "field-exif"
+  )
+  
+  div(
+    id = paste0(id, "_box"),
+    class = cls,
+    div(class = "field-label", label),
+    input_tag
+  )
+}
+
+
+############## UI
+ui <- fluidPage(
+  useShinyjs(),
+  
+  tags$head(
+    tags$style(HTML("
+      .app-shell {
+        display: flex;
+        gap: 16px;
+        align-items: stretch;
+      }
+
+      .left-panel {
+        flex: 0 0 24%;
+      }
+
+      .center-panel {
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+
+      .right-panel {
+        flex: 0 0 22%;
+      }
+
+      .photo-card,
+      .section-card,
+      .result-card {
+        background: #f8f9fa;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        padding: 14px;
+        margin-bottom: 16px;
+      }
+
+      .bottom-grid {
+        display: flex;
+        gap: 16px;
+      }
+
+      .bottom-grid .section-card {
+        flex: 1 1 0;
+        margin-bottom: 0;
+      }
+
+      .section-title {
+        margin-top: 0;
+        margin-bottom: 12px;
+        font-weight: 700;
+      }
+
+      .tight-btn .btn {
+        width: 100%;
+        margin-bottom: 8px;
+      }
+
+      .download-btn .btn {
+        width: 100%;
+      }
+
+      .photo-wrap {
+        width: 100%;
+        overflow-x: auto;
+      }
+
+      .result-card pre {
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      .field-ok .form-control,
+      .field-ok .selectize-input,
+      .field-ok .shiny-date-input .form-control {
+        background-color: #e8f5e9 !important;
+        border-color: #81c784 !important;
+      }
+
+      .field-missing .form-control,
+      .field-missing .selectize-input,
+      .field-missing .shiny-date-input .form-control {
+        background-color: #fff3e0 !important;
+        border-color: #ffb74d !important;
+      }
+
+      .field-exif .form-control,
+      .field-exif .selectize-input,
+      .field-exif .shiny-date-input .form-control {
+        background-color: #e3f2fd !important;
+        border-color: #64b5f6 !important;
+      }
+
+      .field-label {
+        font-size: 12px;
+        font-weight: 600;
+        margin-bottom: 4px;
+      }
+
+      .field-box-spacer {
+        margin-bottom: 10px;
+      }
+
+      .help-text-small {
+        font-size: 12px;
+        color: #666;
+        margin-top: 6px;
+      }
+    "))
+  ),
+  
+  titlePanel("Eclips'app"),
+  tags$div(
+    style = paste(
+      "background-color:#f8f9fa;",
+      "padding:14px 18px;",
+      "margin-bottom:15px;",
+      "border:1px solid #ddd;",
+      "border-radius:8px;"
+    ),
+   
+    tags$p(
+      "Aplicació interactiva per orientar l’observació de l’eclipsi solar del 12 d’agost de 2026 i ajudar a preparar millor la visualització i la fotografia des de cada ubicació.",
+      style = "margin:0; font-size:15px; color:#444;"
+    )
+  ),
+  div(
+    class = "app-shell",
+    
+    div(
+      class = "left-panel",
+      
+      div(
+        class = "section-card tight-btn",
+        h4(class = "section-title", "1. Fotografia lloc d'observació"),
+        tags$div(
+          class = "help-text-small",
+          "Puja una fotografia del lloc on vols fer la observació, orientada a ponent.",
+        ),
+        fileInput("photo", "", accept = c(".jpg", ".jpeg", ".png")),
+        tags$div(
+          class = "help-text-small",
+          "O utilitza la imatge de prova. ",
+          "Quan es carrega, també s'omplen unes coordenades i un azimut de prova orientat a ponent."
+        ),
+        actionButton("use_demo_btn", "Fes servir imatge de prova"),
+        
+        checkboxInput("show_grid", "Mostrar graella", value = FALSE),
+      ),
+      
+      div(
+        class = "section-card",
+        h4(class = "section-title", "2. Localització de la imatge"),
+        tags$div(
+          class = "help-text-small",
+          "Les dades de localització s'obtenen de les metadates de la imatge, o manualment per l'usuari si no es disposa de metadates. "
+        ),
+        div(
+          class = "field-box-spacer",
+          field_box(
+            id = "lat",
+            state = "missing",
+            label = "Latitud",
+            input_tag = numericInput("lat", NULL, value = NA, step = 0.000001)
+          )
+        ),
+        
+        div(
+          class = "field-box-spacer",
+          field_box(
+            id = "lon",
+            state = "missing",
+            label = "Longitud",
+            input_tag = numericInput("lon", NULL, value = NA, step = 0.000001)
+          )
+        ),
+        
+        div(
+          class = "field-box-spacer",
+          field_box(
+            id = "elev",
+            state = "missing",
+            label = "Altitud del lloc (m)",
+            input_tag = numericInput("elev", NULL, value = NA, step = 1)
+          )
+        )
+      ),
+      
+      div(
+        class = "section-card",
+        h4(class = "section-title", "3. Dades de l'eclipsi"),
+        tags$div(
+          class = "help-text-small",
+          "Dia de l'eclipsi i hora de màxima ocultació del Sol. ",
+          "Indica l'hora segons la teva posició geogràfica."
+        ),
+        
+        div(
+          class = "field-box-spacer",
+          field_box(
+            id = "calc_date",
+            state = "ok",
+            label = "Data de l'eclipsi",
+            input_tag = dateInput("calc_date", NULL, value = "2026-08-12", format = "yyyy-mm-dd")
+          )
+        ),
+        
+        div(
+          class = "field-box-spacer",
+          field_box(
+            id = "calc_time",
+            state = "missing",
+            label = "Hora local de màxima ocultació (HH:MM:SS)",
+            input_tag = textInput("calc_time", NULL, value = "")
+          ),
+          tags$div(
+            class = "help-text-small",
+            HTML(
+              paste0(
+                "L'hora prevista de màxima ocultació a Catalunya està entre les 20:15:00 i les 20:30:00. ",
+                "Per consultar l'hora exacta segons el municipi, ",
+                "<a href='https://eclipsicatalunya.cat/punts-d-observacio/' target='_blank'>",
+                "fes servir el cercador d'Eclipsi Catalunya",
+                "</a>."
+              )
+            )
+          )
+        ),
+        
+        div(
+          class = "field-box-spacer",
+          field_box(
+            id = "calc_tz",
+            state = "ok",
+            label = "Fus horari",
+            input_tag = textInput("calc_tz", NULL, value = "Europe/Madrid")
+          )
+        )
+      ),
+      
+      div(
+        class = "section-card",
+        h4(class = "section-title", "4. Geometria inicial"),
+        
+        div(
+          class = "field-box-spacer",
+          field_box(
+            id = "photo_az",
+            state = "missing",
+            label = "Azimut central de la foto (°)",
+            input_tag = numericInput("photo_az", NULL, value = NA, step = 0.1)
+          ),
+          tags$div(
+            class = "help-text-small",
+            "Valor d'azimut per aproximació: 280. ",
+            "Pots utilitzar la brúixola del telèfon per ajustar el valor."
+          )
+        ),
+        
+        div(
+          class = "field-box-spacer",
+          field_box(
+            id = "pitch",
+            state = "ok",
+            label = "Pitch inicial (°)",
+            input_tag = numericInput("pitch", NULL, value = 0, step = 0.1)
+          )
+        ),
+        
+        div(
+          class = "field-box-spacer",
+          field_box(
+            id = "hfov",
+            state = "ok",
+            label = "HFOV (°)",
+            input_tag = numericInput("hfov", NULL, value = 60, step = 0.1)
+          ),
+          tags$div(
+            class = "help-text-small",
+            "HFOV és el camp de visió horitzontal de la foto, és a dir, quants graus del paisatge abasta d’esquerra a dreta."
+          )
+        ),
+        
+        div(
+          class = "field-box-spacer",
+          field_box(
+            id = "vfov",
+            state = "ok",
+            label = "VFOV (°)",
+            input_tag = numericInput("vfov", NULL, value = 40, step = 0.1)
+          ),
+          tags$div(
+            class = "help-text-small",
+            "VFOV és el camp de visió vertical, és a dir, quants graus cobreix de dalt a baix."
+          )
+        )
+      )
+    ),
+    
+    div(
+      class = "center-panel",
+      
+      div(
+        class = "photo-card",
+        h4(class = "section-title", "Foto"),
+        div(
+          class = "photo-wrap",
+          plotOutput("photo_plot", click = "photo_click", height = "650px")
+        )
+      ),
+      
+      div(
+        class = "bottom-grid",
+        
+        div(
+          class = "section-card tight-btn",
+          h4(class = "section-title", "5. Calibratge"),
+          tags$div(
+            class = "help-text-small",
+            "Amb el cursor clica sobre l'horitzó un punt a l'extrem esquerre i després un altre a l'extrem dret."
+          ),
+          actionButton("start_horizon", "Capturar 2 punts de l'horitzó"),
+          actionButton("clear_horizon", "Esborrar horitzó"),
+          tags$hr(),
+          tags$div(
+            class = "help-text-small",
+            "Un cop assignada la línia de l'horitzó, clica el punt central."
+          ),
+          actionButton("set_horizon_center", "Marcar punt central de l'horitzó"),
+          actionButton("clear_horizon_center", "Esborrar punt central"),
+          checkboxInput("auto_use_horizon_pitch", "Usar punt central per recalcular pitch", value = TRUE)
+        ),
+        
+        div(
+          class = "section-card tight-btn",
+          h4(class = "section-title", "6. Ajust fi"),
+          tags$div(
+            class = "help-text-small",
+            "Offset X i Offset Y són ajustos manuals en píxels per moure la posició dibuixada del Sol sobre la foto, sense canviar el càlcul astronòmic del Sol."
+          ),
+          tags$div(
+            class = "help-text-small",
+            "Desplaçament dreta/esquerra"
+          ),
+          numericInput("x_offset", "Offset X (px)", value = 0, step = 1),
+          tags$div(
+            class = "help-text-small",
+            "Desplaçament amunt/avall"
+          ),
+          numericInput("y_offset", "Offset Y (px)", value = 0, step = 1),
+          div(
+            class = "section-card tight-btn download-btn",
+            actionButton("calc_sun", "Calcular posició del Sol", class = "btn-primary"),
+            downloadButton("download_marked", "Descarregar imatge marcada")
+          )
+        )
+      )
+    ),
+    
+    div(
+      class = "right-panel",
+      div(
+        class = "result-card",
+        h4(class = "section-title", "Resultat"),
+        tableOutput("sun_info"),
+        tags$br(),
+        uiOutput("status_ui"),
+        tags$br(),
+        verbatimTextOutput("exif_info"),
+        verbatimTextOutput("click_info"),
+        verbatimTextOutput("horizon_info"),
+        verbatimTextOutput("center_info")
+      )
+    )
+  )
+)
+# ============================================================
+# SERVER
+# ============================================================
+server <- function(input, output, session) {
+  
+  rv <- reactiveValues(
+    active_img = NULL,
+    dims = NULL,
+    last_click = NULL,
+    manual_pt = NULL,
+    horizon_pts = data.frame(x = numeric(0), y = numeric(0)),
+    horizon_center_pt = NULL,
+    capture_horizon = FALSE,
+    capture_horizon_center = FALSE,
+    calc = NULL,
+    exif = NULL,
+    demo_mode = FALSE,
+    field_state = list(
+      lat = "missing",
+      lon = "missing",
+      elev = "missing",
+      calc_date = "ok",
+      calc_time = "missing",
+      calc_tz = "ok",
+      photo_az = "missing",
+      pitch = "ok",
+      hfov = "ok",
+      vfov = "ok"
+    )
+  )
+  
+  set_field_state <- function(id, state) {
+    rv$field_state[[id]] <- state
+  }
+  
+  toggle_state <- function(id, state) {
+    shinyjs::removeClass(selector = paste0("#", id, "_box"), class = "field-ok")
+    shinyjs::removeClass(selector = paste0("#", id, "_box"), class = "field-missing")
+    shinyjs::removeClass(selector = paste0("#", id, "_box"), class = "field-exif")
+    shinyjs::addClass(selector = paste0("#", id, "_box"), class = paste0("field-", state))
+  }
+  
+  has_num <- function(x) is.numeric(x) && length(x) == 1 && !is.na(x)
+  has_txt <- function(x) is.character(x) && length(x) == 1 && nzchar(trimws(x))
+  has_date <- function(x) !is.null(x) && !is.na(x)
+  
+  observe({
+    ids <- c("lat", "lon", "elev", "calc_date", "calc_time", "calc_tz", "photo_az", "pitch", "hfov", "vfov")
+    for (id in ids) {
+      toggle_state(id, rv$field_state[[id]])
+    }
+  })
+  
+  # ------------------------------------------------------------
+  # Llegir EXIF de la foto pujada i omplir inputs si hi ha dades
+  # ------------------------------------------------------------
+  observeEvent(input$photo, {
+    req(input$photo)
+    
+    rv$demo_mode <- FALSE
+    rv$active_img <- input$photo$datapath
+    rv$dims <- read_image_dims(rv$active_img)
+    
+    exif_sum <- read_photo_exif_summary(input$photo$datapath)
+    rv$exif <- exif_sum
+    
+    if (!is.na(exif_sum$lat)) {
+      updateNumericInput(session, "lat", value = round(exif_sum$lat, 6))
+      set_field_state("lat", "exif")
+    } else {
+      updateNumericInput(session, "lat", value = NA)
+      set_field_state("lat", "missing")
+    }
+    
+    if (!is.na(exif_sum$lon)) {
+      updateNumericInput(session, "lon", value = round(exif_sum$lon, 6))
+      set_field_state("lon", "exif")
+    } else {
+      updateNumericInput(session, "lon", value = NA)
+      set_field_state("lon", "missing")
+    }
+    
+    if (!is.na(exif_sum$elev)) {
+      updateNumericInput(session, "elev", value = round(exif_sum$elev, 1))
+      set_field_state("elev", "exif")
+    } else {
+      updateNumericInput(session, "elev", value = NA)
+      set_field_state("elev", "missing")
+    }
+  })
+  # ------------------------------------------------------------
+  # Demo imatge
+  # ------------------------------------------------------------
+  observeEvent(input$use_demo_btn, {
+    tmp_demo <- tempfile(fileext = ".png")
+    create_demo_image(tmp_demo)
+    
+    rv$demo_mode <- TRUE
+    rv$active_img <- tmp_demo
+    rv$dims <- read_image_dims(rv$active_img)
+    rv$exif <- NULL
+    
+    # Valors de prova
+    updateNumericInput(session, "lat", value = 41.470000)
+    updateNumericInput(session, "lon", value = 1.020000)
+    updateNumericInput(session, "elev", value = 600)
+    updateNumericInput(session, "photo_az", value = 270)   # ponent
+    
+    # Opcional: pots deixar aquesta hora de prova
+    # updateTextInput(session, "calc_time", value = "20:29:00")
+    
+    set_field_state("lat", "ok")
+    set_field_state("lon", "ok")
+    set_field_state("elev", "ok")
+    set_field_state("photo_az", "ok")
+  })
+  # ------------------------------------------------------------
+  # Si l'usuari modifica un camp manualment, passa a OK
+  # ------------------------------------------------------------
+  observeEvent(input$lat, {
+    if (has_num(input$lat) && rv$field_state$lat != "exif") set_field_state("lat", "ok")
+    if (!has_num(input$lat)) set_field_state("lat", "missing")
+  }, ignoreInit = TRUE)
+  
+  observeEvent(input$lon, {
+    if (has_num(input$lon) && rv$field_state$lon != "exif") set_field_state("lon", "ok")
+    if (!has_num(input$lon)) set_field_state("lon", "missing")
+  }, ignoreInit = TRUE)
+  
+  observeEvent(input$elev, {
+    if (has_num(input$elev) && rv$field_state$elev != "exif") set_field_state("elev", "ok")
+    if (!has_num(input$elev)) set_field_state("elev", "missing")
+  }, ignoreInit = TRUE)
+  
+  observeEvent(input$calc_date, {
+    if (has_date(input$calc_date)) set_field_state("calc_date", "ok") else set_field_state("calc_date", "missing")
+  }, ignoreInit = TRUE)
+  
+  observeEvent(input$calc_time, {
+    if (has_txt(input$calc_time)) set_field_state("calc_time", "ok") else set_field_state("calc_time", "missing")
+  }, ignoreInit = TRUE)
+  
+  observeEvent(input$calc_tz, {
+    if (has_txt(input$calc_tz)) set_field_state("calc_tz", "ok") else set_field_state("calc_tz", "missing")
+  }, ignoreInit = TRUE)
+  
+  observeEvent(input$photo_az, {
+    if (has_num(input$photo_az)) set_field_state("photo_az", "ok") else set_field_state("photo_az", "missing")
+  }, ignoreInit = TRUE)
+  
+  observeEvent(input$pitch, {
+    if (has_num(input$pitch)) set_field_state("pitch", "ok") else set_field_state("pitch", "missing")
+  }, ignoreInit = TRUE)
+  
+  observeEvent(input$hfov, {
+    if (has_num(input$hfov)) set_field_state("hfov", "ok") else set_field_state("hfov", "missing")
+  }, ignoreInit = TRUE)
+  
+  observeEvent(input$vfov, {
+    if (has_num(input$vfov)) set_field_state("vfov", "ok") else set_field_state("vfov", "missing")
+  }, ignoreInit = TRUE)
+  
+  
+  # ------------------------------------------------------------
+  # Clic sobre la foto
+  # ------------------------------------------------------------
+  observeEvent(input$photo_click, {
+    req(rv$dims)
+    
+    click <- input$photo_click
+    if (is.null(click$x) || is.null(click$y)) return()
+    
+    rv$last_click <- list(x = click$x, y = click$y)
+    
+    if (isTRUE(rv$capture_horizon)) {
+      if (nrow(rv$horizon_pts) < 2) {
+        rv$horizon_pts <- rbind(rv$horizon_pts, data.frame(x = click$x, y = click$y))
+      }
+      if (nrow(rv$horizon_pts) >= 2) {
+        rv$horizon_pts <- rv$horizon_pts[1:2, , drop = FALSE]
+        rv$capture_horizon <- FALSE
+      }
+    }
+    
+    if (isTRUE(rv$capture_horizon_center)) {
+      rv$horizon_center_pt <- list(x = click$x, y = click$y)
+      rv$capture_horizon_center <- FALSE
+    }
+  })
+  
+  observeEvent(input$start_horizon, {
+    rv$horizon_pts <- data.frame(x = numeric(0), y = numeric(0))
+    rv$capture_horizon <- TRUE
+  })
+  
+  observeEvent(input$clear_horizon, {
+    rv$horizon_pts <- data.frame(x = numeric(0), y = numeric(0))
+  })
+  
+  observeEvent(input$set_horizon_center, {
+    rv$capture_horizon_center <- TRUE
+  })
+  
+  observeEvent(input$clear_horizon_center, {
+    rv$horizon_center_pt <- NULL
+  })
+  
+  # ------------------------------------------------------------
+  # Roll derivat de l'horitzó
+  # ------------------------------------------------------------
+  horizon_roll_deg <- reactive({
+    if (nrow(rv$horizon_pts) != 2) return(0)
+    
+    dx <- rv$horizon_pts$x[2] - rv$horizon_pts$x[1]
+    dy <- rv$horizon_pts$y[2] - rv$horizon_pts$y[1]
+    angle <- rad2deg(atan2(dy, dx))
+    -angle
+  })
+  
+  # ------------------------------------------------------------
+  # Pitch recalculat
+  # ------------------------------------------------------------
+  effective_pitch <- reactive({
+    base_pitch <- input$pitch
+    
+    if (!isTRUE(input$auto_use_horizon_pitch)) return(base_pitch)
+    if (is.null(rv$horizon_center_pt) || is.null(rv$dims)) return(base_pitch)
+    
+    pt_rot <- rotate_point(
+      x = rv$horizon_center_pt$x,
+      y = rv$horizon_center_pt$y,
+      cx = rv$dims$width / 2,
+      cy = rv$dims$height / 2,
+      angle_deg = horizon_roll_deg()
+    )
+    
+    pitch_est <- ((pt_rot$y / rv$dims$height) - 0.5) * input$vfov
+    pitch_est
+  })
+  
+  # ------------------------------------------------------------
+  # Càlcul del Sol
+  # ------------------------------------------------------------
+  observeEvent(input$calc_sun, {
+    req(rv$active_img, rv$dims)
+    
+    datetime_local_str <- paste(as.character(input$calc_date), input$calc_time)
+    
+    time_local <- tryCatch(
+      as.POSIXct(datetime_local_str, tz = input$calc_tz, format = "%Y-%m-%d %H:%M:%S"),
+      error = function(e) NULL
+    )
+    
+    validate(
+      need(!is.null(time_local) && !is.na(time_local),
+           "No s'ha pogut interpretar la data/hora de càlcul. Usa HH:MM:SS.")
+    )
+    
+    sun <- solar_position(
+      datetime_local = time_local,
+      tz_string = input$calc_tz,
+      lat_deg = input$lat,
+      lon_deg = input$lon
+    )
+    
+    proj <- sun_to_image_xy(
+      sun_az = sun$azimuth,
+      sun_alt = sun$altitude,
+      photo_center_az = input$photo_az,
+      photo_pitch = effective_pitch(),
+      hfov = input$hfov,
+      vfov = input$vfov,
+      img_width = rv$dims$width,
+      img_height = rv$dims$height,
+      roll_deg = horizon_roll_deg()
+    )
+    
+    rv$calc <- list(
+      sun = sun,
+      proj = proj,
+      roll_deg = horizon_roll_deg(),
+      pitch_deg = effective_pitch(),
+      calc_date = as.character(input$calc_date),
+      calc_time = input$calc_time,
+      calc_tz = input$calc_tz
+    )
+  })
+  
+  # ------------------------------------------------------------
+  # Posició ajustada final
+  # ------------------------------------------------------------
+  sun_adjusted <- reactive({
+    req(rv$calc, rv$dims)
+    
+    x_adj <- rv$calc$proj$x + input$x_offset
+    y_adj <- rv$calc$proj$y + input$y_offset
+    
+    inside <- (
+      x_adj >= 0 && x_adj <= rv$dims$width &&
+        y_adj >= 0 && y_adj <= rv$dims$height
+    )
+    
+    list(x = x_adj, y = y_adj, inside = inside)
+  })
+  
+  # ------------------------------------------------------------
+  # Render imatge
+  # ------------------------------------------------------------
+  output$photo_plot <- renderPlot({
+    req(rv$active_img, rv$dims)
+    
+    out_tmp <- tempfile(fileext = ".png")
+    
+    sun_pt <- NULL
+    sun_label <- NULL
+    if (!is.null(rv$calc)) {
+      adj <- sun_adjusted()
+      sun_pt <- list(x = adj$x, y = adj$y)
+      sun_label <- sprintf(
+        "Sol  az=%.2f°  alt=%.2f°",
+        rv$calc$sun$azimuth,
+        rv$calc$sun$altitude
+      )
+    }
+    
+    draw_overlay_image(
+      img_path = rv$active_img,
+      out_path = out_tmp,
+      sun_pt = sun_pt,
+      sun_label = sun_label,
+      horizon_pts = if (nrow(rv$horizon_pts) > 0) rv$horizon_pts else NULL,
+      horizon_center_pt = rv$horizon_center_pt,
+      click_pt = rv$last_click,
+      manual_pt = rv$manual_pt,
+      show_grid = isTRUE(input$show_grid),
+      show_center_cross = TRUE
+    )
+    
+    dims <- read_image_dims(out_tmp)
+    img_arr <- read_image_array(out_tmp)
+    
+    op <- par(mar = c(0, 0, 0, 0), xaxs = "i", yaxs = "i")
+    on.exit(par(op), add = TRUE)
+    
+    plot.new()
+    plot.window(xlim = c(0, dims$width), ylim = c(dims$height, 0))
+    rasterImage(img_arr, 0, dims$height, dims$width, 0)
+  })
+  
+  # ------------------------------------------------------------
+  # Taula de resultat
+  # ------------------------------------------------------------
+  output$sun_info <- renderTable({
+    req(rv$calc)
+    adj <- sun_adjusted()
+    
+    data.frame(
+      Camp = c(
+        "Data de càlcul",
+        "Hora local de càlcul",
+        "Fus horari de càlcul",
+        "Data/hora local utilitzades",
+        "Data/hora UTC utilitzades",
+        "Azimut del Sol (°)",
+        "Altura del Sol (°)",
+        "Roll aplicat (°)",
+        "Pitch efectiu (°)",
+        "Offset angular X (°)",
+        "Offset angular Y (°)",
+        "X projectat (px)",
+        "Y projectat (px)",
+        "X final (px)",
+        "Y final (px)"
+      ),
+      Valor = c(
+        rv$calc$calc_date,
+        rv$calc$calc_time,
+        rv$calc$calc_tz,
+        format(rv$calc$sun$datetime_local, "%Y-%m-%d %H:%M:%S %Z"),
+        format(rv$calc$sun$datetime_utc, "%Y-%m-%d %H:%M:%S UTC"),
+        sprintf("%.3f", rv$calc$sun$azimuth),
+        sprintf("%.3f", rv$calc$sun$altitude),
+        sprintf("%.3f", rv$calc$roll_deg),
+        sprintf("%.3f", rv$calc$pitch_deg),
+        sprintf("%.3f", rv$calc$proj$dx_deg),
+        sprintf("%.3f", rv$calc$proj$dy_deg),
+        sprintf("%.1f", rv$calc$proj$x),
+        sprintf("%.1f", rv$calc$proj$y),
+        sprintf("%.1f", adj$x),
+        sprintf("%.1f", adj$y)
+      ),
+      check.names = FALSE
+    )
+  }, striped = TRUE, bordered = TRUE, spacing = "s")
+  
+  output$status_ui <- renderUI({
+    req(rv$calc)
+    adj <- sun_adjusted()
+    
+    tags$div(
+      style = "padding:10px; border:1px solid #ccc; border-radius:6px;",
+      tags$b(
+        if (rv$calc$proj$inside) {
+          "La projecció geomètrica del Sol cau dins de la imatge."
+        } else {
+          "La projecció geomètrica del Sol cau fora de la imatge."
+        }
+      ),
+      tags$br(),
+      if (adj$inside) {
+        tags$span(style = "color:#2e7d32; font-weight:600;",
+                  "La posició final ajustada és dins de la imatge.")
+      } else {
+        tags$span(style = "color:#c62828; font-weight:600;",
+                  "La posició final ajustada és fora de la imatge.")
+      }
+    )
+  })
+  
+  output$exif_info <- renderText({
+    if (isTRUE(rv$demo_mode)) {
+      return(
+        paste(
+          "Mode demo actiu:",
+          "imatge de prova carregada amb coordenades de prova",
+          "(lat 41.470000, lon 1.020000, alt 600 m)",
+          "i azimut central orientat a ponent (270°).",
+          sep = "\n"
+        )
+      )
+    }
+    
+    if (is.null(rv$exif)) {
+      return("EXIF foto: encara no s'ha llegit cap foto.")
+    }
+    
+    parts <- c("EXIF foto:")
+    
+    if (!is.na(rv$exif$lat) && !is.na(rv$exif$lon)) {
+      parts <- c(parts, sprintf("GPS = %.6f, %.6f", rv$exif$lat, rv$exif$lon))
+    }
+    
+    if (!is.na(rv$exif$elev)) {
+      parts <- c(parts, sprintf("Altitud = %.1f m", rv$exif$elev))
+    }
+    
+    if (!is.na(rv$exif$datetime)) {
+      parts <- c(parts, paste("Data/hora foto =", rv$exif$datetime))
+    }
+    
+    if (!is.na(rv$exif$device)) {
+      parts <- c(parts, paste("Dispositiu =", rv$exif$device))
+    }
+    
+    if (length(parts) == 1) {
+      return(paste("EXIF foto:", rv$exif$message))
+    }
+    
+    paste(parts, collapse = "\n")
+  })
+  
+  output$click_info <- renderText({
+    if (is.null(rv$last_click)) return("Clic actual: cap")
+    sprintf("Clic actual:\nX = %.1f px\nY = %.1f px", rv$last_click$x, rv$last_click$y)
+  })
+  
+  output$horizon_info <- renderText({
+    if (nrow(rv$horizon_pts) == 0) return("Horitzó: no definit")
+    if (nrow(rv$horizon_pts) == 1) {
+      return(sprintf(
+        "Horitzó:\nPunt 1 = (%.1f, %.1f)\nEsperant 2n punt...",
+        rv$horizon_pts$x[1], rv$horizon_pts$y[1]
+      ))
+    }
+    
+    dx <- rv$horizon_pts$x[2] - rv$horizon_pts$x[1]
+    dy <- rv$horizon_pts$y[2] - rv$horizon_pts$y[1]
+    angle <- rad2deg(atan2(dy, dx))
+    
+    sprintf(
+      paste(
+        "Horitzó:",
+        "Punt 1 = (%.1f, %.1f)",
+        "Punt 2 = (%.1f, %.1f)",
+        "Angle línia = %.3f°",
+        "Roll correctiu = %.3f°",
+        sep = "\n"
+      ),
+      rv$horizon_pts$x[1], rv$horizon_pts$y[1],
+      rv$horizon_pts$x[2], rv$horizon_pts$y[2],
+      angle,
+      horizon_roll_deg()
+    )
+  })
+  
+  output$center_info <- renderText({
+    if (is.null(rv$horizon_center_pt)) {
+      return("Punt central d'horitzó: no definit")
+    }
+    
+    sprintf(
+      paste(
+        "Punt central d'horitzó:",
+        "X = %.1f px",
+        "Y = %.1f px",
+        "Pitch efectiu estimat = %.3f°",
+        sep = "\n"
+      ),
+      rv$horizon_center_pt$x,
+      rv$horizon_center_pt$y,
+      effective_pitch()
+    )
+  })
+  
+  output$download_marked <- downloadHandler(
+    filename = function() {
+      paste0("foto_sol_v3_", Sys.Date(), ".png")
+    },
+    content = function(file) {
+      req(rv$active_img, rv$dims)
+      
+      sun_pt <- NULL
+      sun_label <- NULL
+      if (!is.null(rv$calc)) {
+        adj <- sun_adjusted()
+        sun_pt <- list(x = adj$x, y = adj$y)
+        sun_label <- sprintf(
+          "Sol  az=%.2f°  alt=%.2f°",
+          rv$calc$sun$azimuth,
+          rv$calc$sun$altitude
+        )
+      }
+      
+      draw_overlay_image(
+        img_path = rv$active_img,
+        out_path = file,
+        sun_pt = sun_pt,
+        sun_label = sun_label,
+        horizon_pts = if (nrow(rv$horizon_pts) > 0) rv$horizon_pts else NULL,
+        horizon_center_pt = rv$horizon_center_pt,
+        click_pt = rv$last_click,
+        manual_pt = rv$manual_pt,
+        show_grid = isTRUE(input$show_grid),
+        show_center_cross = TRUE
+      )
+    }
+  )
+}
+shinyApp(ui, server)
