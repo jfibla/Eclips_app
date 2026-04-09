@@ -9,6 +9,7 @@ library(png)
 library(jpeg)
 library(exifr)
 library(shinyjs)
+library(shinycssloaders)
 
 # ============================================================
 # FUNCIONS BÀSIQUES
@@ -630,7 +631,8 @@ ui <- fluidPage(
       .field-missing .selectize-input,
       .field-missing .shiny-date-input .form-control {
         background-color: #fff3e0 !important;
-        border-color: #ffb74d !important;
+        border-color: #ff9800 !important;
+        box-shadow: 0 0 0 2px rgba(255, 152, 0, 0.15) !important;
       }
 
       .field-exif .form-control,
@@ -655,10 +657,25 @@ ui <- fluidPage(
         color: #666;
         margin-top: 6px;
       }
+      
+.section-card .row {
+  margin-left: -6px;
+  margin-right: -6px;
+}
+
+.section-card .col-sm-4,
+.section-card .col-md-4,
+.section-card .col-lg-4 {
+  padding-left: 6px;
+  padding-right: 6px;
+}
+
     "))
+    
   ),
   
   titlePanel("🌘 Eclips'app"),
+  
   tags$div(
     style = paste(
       "background-color:#f8f9fa;",
@@ -667,12 +684,12 @@ ui <- fluidPage(
       "border:1px solid #ddd;",
       "border-radius:8px;"
     ),
-   
     tags$p(
       "Aplicació interactiva per orientar l’observació de l’eclipsi solar del 12 d’agost de 2026 i ajudar a preparar millor la visualització i la fotografia des de cada ubicació.",
       style = "margin:0; font-size:15px; color:#444;"
     )
   ),
+  
   div(
     class = "app-shell",
     
@@ -681,20 +698,35 @@ ui <- fluidPage(
       
       div(
         class = "section-card tight-btn",
-        h4(class = "section-title", "1. Fotografia lloc d'observació"),
+        h4(class = "section-title", "1. Fotografia del lloc d'observació"),
+        
         tags$div(
           class = "help-text-small",
-          "Puja una fotografia del lloc on vols fer la observació, orientada a ponent.",
+          style = "margin-bottom:0px;",
+          "Puja una fotografia del lloc on vols fer la observació, orientada a ponent ... "
         ),
-        fileInput("photo", "", accept = c(".jpg", ".jpeg", ".png")),
+        
+        div(
+          style = "margin-bottom:0px;",
+          fileInput("photo", NULL, accept = c(".jpg", ".jpeg", ".png"))
+        ),
+
         tags$div(
           class = "help-text-small",
-          "O utilitza la imatge de prova. ",
+          style = "margin-top:0; margin-bottom:0px;",
+          " ... o utilitza la imatge de prova. ",
           "Quan es carrega, també s'omplen unes coordenades i un azimut de prova orientat a ponent."
         ),
-        actionButton("use_demo_btn", "Fes servir imatge de prova"),
         
-        checkboxInput("show_grid", "Mostrar graella", value = FALSE),
+        div(
+          style = "margin-bottom:0px;",
+          actionButton("use_demo_btn", "Fes servir imatge de prova")
+        ),
+        
+        div(
+          style = "margin-bottom:0;",
+          checkboxInput("show_grid", "Mostrar graella", value = FALSE)
+        )
       ),
       
       div(
@@ -702,42 +734,116 @@ ui <- fluidPage(
         h4(class = "section-title", "2. Localització de la imatge"),
         tags$div(
           class = "help-text-small",
-          "Les dades de localització s'obtenen de les metadates de la imatge, o manualment per l'usuari si no es disposa de metadates. "
-        ),
-        div(
-          class = "field-box-spacer",
-          field_box(
-            id = "lat",
-            state = "missing",
-            label = "Latitud",
-            input_tag = numericInput("lat", NULL, value = NA, step = 0.000001)
-          )
+          "Les dades de localització s'obtenen de les metadates de la imatge, o manualment per l'usuari si no es disposa de metadates."
         ),
         
-        div(
-          class = "field-box-spacer",
-          field_box(
-            id = "lon",
-            state = "missing",
-            label = "Longitud",
-            input_tag = numericInput("lon", NULL, value = NA, step = 0.000001)
-          )
-        ),
-        
-        div(
-          class = "field-box-spacer",
-          field_box(
-            id = "elev",
-            state = "missing",
-            label = "Altitud del lloc (m)",
-            input_tag = numericInput("elev", NULL, value = NA, step = 1)
+        splitLayout(
+          cellWidths = c("33%", "33%", "34%"),
+          
+          div(
+            id = "box_lat",
+            class = "field-box-spacer",
+            field_box(
+              id = "lat",
+              state = "missing",
+              label = "Lat",
+              input_tag = numericInput("lat", NULL, value = NA, step = 0.000001, width = "100%")
+            )
+          ),
+          
+          div(
+            id = "box_lon",
+            class = "field-box-spacer",
+            field_box(
+              id = "lon",
+              state = "missing",
+              label = "Lon",
+              input_tag = numericInput("lon", NULL, value = NA, step = 0.000001, width = "100%")
+            )
+          ),
+          
+          div(
+            id = "box_elev",
+            class = "field-box-spacer",
+            field_box(
+              id = "elev",
+              state = "missing",
+              label = "Alt (m)",
+              input_tag = numericInput("elev", NULL, value = NA, step = 1, width = "100%")
+            )
           )
         )
       ),
       
       div(
         class = "section-card",
-        h4(class = "section-title", "3. Dades de l'eclipsi"),
+        h4(class = "section-title", "3. Geometria de la imatge"),
+        
+        div(
+          id = "box_photo_az",
+          class = "field-box-spacer",
+          field_box(
+            id = "photo_az",
+            state = "missing",
+            label = "Azimut central de la foto (°)",
+            input_tag = numericInput("photo_az", NULL, value = "280", step = 0.1)
+          ),
+          tags$div(
+            class = "help-text-small",
+            "Valor d'azimut per aproximació: 280. ",
+            "Pots utilitzar la brúixola del telèfon per ajustar el valor."
+          )
+        ),
+        
+        div(
+          id = "box_pitch",
+          class = "field-box-spacer",
+          field_box(
+            id = "pitch",
+            state = "ok",
+            label = "Pitch inicial (°)",
+            input_tag = numericInput("pitch", NULL, value = 0, step = 0.1)
+          ),
+          tags$div(
+            class = "help-text-small",
+            "Inclinació vertical de la càmera respecte a l’horitzó. Valor per defecte, modificar si fos necessari."
+          )
+        ),
+        
+        div(
+          id = "box_hfov",
+          class = "field-box-spacer",
+          field_box(
+            id = "hfov",
+            state = "ok",
+            label = "HFOV (°)",
+            input_tag = numericInput("hfov", NULL, value = 60, step = 0.1)
+          ),
+          tags$div(
+            class = "help-text-small",
+            "HFOV és el camp de visió horitzontal de la foto, és a dir, quants graus del paisatge abasta d’esquerra a dreta. Valor per defecte, modificar si fos necessari."
+          )
+        ),
+        
+        div(
+          id = "box_vfov",
+          class = "field-box-spacer",
+          field_box(
+            id = "vfov",
+            state = "ok",
+            label = "VFOV (°)",
+            input_tag = numericInput("vfov", NULL, value = 40, step = 0.1)
+          ),
+          tags$div(
+            class = "help-text-small",
+            "VFOV és el camp de visió vertical, és a dir, quants graus cobreix de dalt a baix. Valor per defecte, modificar si fos necessari."
+          )
+        )
+      ),
+      
+      div(
+        class = "section-card",
+        h4(class = "section-title", "4. Dades de l'eclipsi"),
         tags$div(
           class = "help-text-small",
           "Dia de l'eclipsi i hora de màxima ocultació del Sol. ",
@@ -745,6 +851,7 @@ ui <- fluidPage(
         ),
         
         div(
+          id = "box_calc_date",
           class = "field-box-spacer",
           field_box(
             id = "calc_date",
@@ -755,6 +862,7 @@ ui <- fluidPage(
         ),
         
         div(
+          id = "box_calc_time",
           class = "field-box-spacer",
           field_box(
             id = "calc_time",
@@ -777,70 +885,13 @@ ui <- fluidPage(
         ),
         
         div(
+          id = "box_calc_tz",
           class = "field-box-spacer",
           field_box(
             id = "calc_tz",
             state = "ok",
             label = "Fus horari",
             input_tag = textInput("calc_tz", NULL, value = "Europe/Madrid")
-          )
-        )
-      ),
-      
-      div(
-        class = "section-card",
-        h4(class = "section-title", "4. Geometria inicial"),
-        
-        div(
-          class = "field-box-spacer",
-          field_box(
-            id = "photo_az",
-            state = "missing",
-            label = "Azimut central de la foto (°)",
-            input_tag = numericInput("photo_az", NULL, value = NA, step = 0.1)
-          ),
-          tags$div(
-            class = "help-text-small",
-            "Valor d'azimut per aproximació: 280. ",
-            "Pots utilitzar la brúixola del telèfon per ajustar el valor."
-          )
-        ),
-        
-        div(
-          class = "field-box-spacer",
-          field_box(
-            id = "pitch",
-            state = "ok",
-            label = "Pitch inicial (°)",
-            input_tag = numericInput("pitch", NULL, value = 0, step = 0.1)
-          )
-        ),
-        
-        div(
-          class = "field-box-spacer",
-          field_box(
-            id = "hfov",
-            state = "ok",
-            label = "HFOV (°)",
-            input_tag = numericInput("hfov", NULL, value = 60, step = 0.1)
-          ),
-          tags$div(
-            class = "help-text-small",
-            "HFOV és el camp de visió horitzontal de la foto, és a dir, quants graus del paisatge abasta d’esquerra a dreta."
-          )
-        ),
-        
-        div(
-          class = "field-box-spacer",
-          field_box(
-            id = "vfov",
-            state = "ok",
-            label = "VFOV (°)",
-            input_tag = numericInput("vfov", NULL, value = 40, step = 0.1)
-          ),
-          tags$div(
-            class = "help-text-small",
-            "VFOV és el camp de visió vertical, és a dir, quants graus cobreix de dalt a baix."
           )
         )
       )
@@ -850,12 +901,8 @@ ui <- fluidPage(
       class = "center-panel",
       
       div(
-        class = "photo-card",
-        h4(class = "section-title", "Foto"),
-        div(
-          class = "photo-wrap",
-          plotOutput("photo_plot", click = "photo_click", height = "650px")
-        )
+        class = "photo-wrap",
+        uiOutput("photo_panel")
       ),
       
       div(
@@ -863,7 +910,7 @@ ui <- fluidPage(
         
         div(
           class = "section-card tight-btn",
-          h4(class = "section-title", "5. Calibratge"),
+          h4(class = "section-title", "5. Calibratge (opcional per millorar posició)"),
           tags$div(
             class = "help-text-small",
             "Amb el cursor clica sobre l'horitzó un punt a l'extrem esquerre i després un altre a l'extrem dret."
@@ -902,7 +949,7 @@ ui <- fluidPage(
             class = "help-text-small",
             "Desplaçament amunt/avall"
           ),
-          numericInput("y_offset", "Offset Y (px)", value = 0, step = 1),
+          numericInput("y_offset", "Offset Y (px)", value = 0, step = 1)
         )
       )
     ),
@@ -924,6 +971,7 @@ ui <- fluidPage(
     )
   )
 )
+
 # ============================================================
 # SERVER
 # ============================================================
@@ -954,6 +1002,14 @@ server <- function(input, output, session) {
       vfov = "ok"
     )
   )
+  
+  mark_missing_box <- function(id) {
+    shinyjs::addClass(selector = paste0("#", id), class = "field-missing")
+  }
+  
+  clear_missing_box <- function(id) {
+    shinyjs::removeClass(selector = paste0("#", id), class = "field-missing")
+  }
   
   set_field_state <- function(id, state) {
     rv$field_state[[id]] <- state
@@ -1170,17 +1226,88 @@ server <- function(input, output, session) {
   observeEvent(input$calc_sun, {
     req(rv$active_img, rv$dims)
     
-    datetime_local_str <- paste(as.character(input$calc_date), input$calc_time)
+    box_ids <- c(
+      "box_calc_date", "box_calc_time", "box_calc_tz",
+      "box_lat", "box_lon", "box_photo_az", "box_hfov", "box_vfov"
+    )
+    
+    lapply(box_ids, clear_missing_box)
+    
+    missing_fields <- c()
+    
+    if (is.null(input$calc_date) || !nzchar(as.character(input$calc_date))) {
+      missing_fields <- c(missing_fields, "data")
+      mark_missing_box("box_calc_date")
+    }
+    
+    if (is.null(input$calc_time) || !nzchar(trimws(input$calc_time))) {
+      missing_fields <- c(missing_fields, "hora")
+      mark_missing_box("box_calc_time")
+    }
+    
+    if (is.null(input$calc_tz) || !nzchar(trimws(input$calc_tz))) {
+      missing_fields <- c(missing_fields, "fus horari")
+      mark_missing_box("box_calc_tz")
+    }
+    
+    if (is.null(input$lat) || !is.finite(suppressWarnings(as.numeric(input$lat)))) {
+      missing_fields <- c(missing_fields, "latitud")
+      mark_missing_box("box_lat")
+    }
+    
+    if (is.null(input$lon) || !is.finite(suppressWarnings(as.numeric(input$lon)))) {
+      missing_fields <- c(missing_fields, "longitud")
+      mark_missing_box("box_lon")
+    }
+    
+    if (is.null(input$photo_az) || !is.finite(suppressWarnings(as.numeric(input$photo_az)))) {
+      missing_fields <- c(missing_fields, "azimut de la foto")
+      mark_missing_box("box_photo_az")
+    }
+    
+    if (is.null(input$hfov) || !is.finite(suppressWarnings(as.numeric(input$hfov)))) {
+      missing_fields <- c(missing_fields, "HFOV")
+      mark_missing_box("box_hfov")
+    }
+    
+    if (is.null(input$vfov) || !is.finite(suppressWarnings(as.numeric(input$vfov)))) {
+      missing_fields <- c(missing_fields, "VFOV")
+      mark_missing_box("box_vfov")
+    }
+    
+    if (length(missing_fields) > 0) {
+      showNotification(
+        paste(
+          "Falten dades per calcular la posició del Sol:",
+          paste(missing_fields, collapse = ", ")
+        ),
+        type = "warning",
+        duration = 6
+      )
+      return(NULL)
+    }
+    
+    datetime_local_str <- paste(as.character(input$calc_date), trimws(input$calc_time))
     
     time_local <- tryCatch(
-      as.POSIXct(datetime_local_str, tz = input$calc_tz, format = "%Y-%m-%d %H:%M:%S"),
+      as.POSIXct(
+        datetime_local_str,
+        tz = input$calc_tz,
+        format = "%Y-%m-%d %H:%M:%S"
+      ),
       error = function(e) NULL
     )
     
-    validate(
-      need(!is.null(time_local) && !is.na(time_local),
-           "No s'ha pogut interpretar la data/hora de càlcul. Usa HH:MM:SS.")
-    )
+    if (is.null(time_local) || is.na(time_local)) {
+      mark_missing_box("box_calc_time")
+      
+      showNotification(
+        "No s'ha pogut interpretar la data/hora de càlcul. Usa el format HH:MM:SS.",
+        type = "error",
+        duration = 6
+      )
+      return(NULL)
+    }
     
     sun <- solar_position(
       datetime_local = time_local,
@@ -1210,6 +1337,45 @@ server <- function(input, output, session) {
       calc_time = input$calc_time,
       calc_tz = input$calc_tz
     )
+  })
+  
+  #-------------------------------------------------------------
+  # canvi color 
+  #-------------------------------------------------------------
+  observeEvent(input$calc_time, {
+    if (!is.null(input$calc_time) && nzchar(trimws(input$calc_time))) {
+      clear_missing_box("box_calc_time")
+    }
+  })
+  
+  observeEvent(input$lat, {
+    if (is.finite(suppressWarnings(as.numeric(input$lat)))) {
+      clear_missing_box("box_lat")
+    }
+  })
+  
+  observeEvent(input$lon, {
+    if (is.finite(suppressWarnings(as.numeric(input$lon)))) {
+      clear_missing_box("box_lon")
+    }
+  })
+  
+  observeEvent(input$photo_az, {
+    if (is.finite(suppressWarnings(as.numeric(input$photo_az)))) {
+      clear_missing_box("box_photo_az")
+    }
+  })
+  
+  observeEvent(input$hfov, {
+    if (is.finite(suppressWarnings(as.numeric(input$hfov)))) {
+      clear_missing_box("box_hfov")
+    }
+  })
+  
+  observeEvent(input$vfov, {
+    if (is.finite(suppressWarnings(as.numeric(input$vfov)))) {
+      clear_missing_box("box_vfov")
+    }
   })
   
   # ------------------------------------------------------------
@@ -1271,6 +1437,31 @@ server <- function(input, output, session) {
     plot.new()
     plot.window(xlim = c(0, dims$width), ylim = c(dims$height, 0))
     rasterImage(img_arr, 0, dims$height, dims$width, 0)
+  })
+  
+  output$photo_panel <- renderUI({
+    if (is.null(rv$active_img)) {
+      return(
+        div(
+          style = paste(
+            "height:650px;",
+            "display:flex;",
+            "align-items:center;",
+            "justify-content:center;",
+            "background:#f8f9fa;",
+            "color:#666;",
+            "border-radius:6px;",
+            "border:1px dashed #ccc;"
+          ),
+          "Encara no s'ha carregat cap fotografia."
+        )
+      )
+    }
+    
+    withSpinner(
+      plotOutput("photo_plot", click = "photo_click", height = "650px"),
+      type = 4
+    )
   })
   
   # ------------------------------------------------------------
