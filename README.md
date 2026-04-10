@@ -1,95 +1,108 @@
-# 🌘 Eclips’app
+🌘 Eclips’app
 
-Aplicació Shiny per planificar i visualitzar l’observació de l’eclipsi solar del **12 d’agost de 2026** des de Catalunya.
+Aplicació Shiny per planificar i visualitzar l’observació de l’eclipsi solar del 12 d’agost de 2026 des de Catalunya.
 
----
-
-## 🌐 Accés a l’aplicació
+🌐 Accés a l’aplicació
 
 Pots utilitzar l’app directament des del navegador:
 
 👉 https://genometools.shinyapps.io/Eclips_app/
 
----
-
-## 🎯 Objectiu
+🎯 Objectiu
 
 Eclips’app permet als usuaris:
-- Localitzar la posició exacta del Sol durant l’eclipsi
-- Conèixer l’orientació (azimut) i l’alçada del Sol
-- Validar si una ubicació o fotografia és adequada per a l’observació
-- Estimar l’hora local de màxima ocultació
 
----
-
-## 🧭 Funcionalitats principals
-
-- 📍 Selecció de posició geogràfica (manual o amb clic al mapa)
-- 🧮 Càlcul d’azimut i elevació del Sol
-- 🖼️ Visualització de la trajectòria solar sobre fotografies
-- ⏱️ Introducció de l’hora local d’observació
-- 📌 Validació de punts d’observació
-- 🧭 Guia orientativa per observar l’eclipsi a Catalunya
-
----
-
-## 🕒 Hora de màxima ocultació
+Localitzar la posició exacta del Sol durant l’eclipsi
+Conèixer l’orientació (azimut) i l’alçada del Sol
+Validar si una ubicació o fotografia és adequada per a l’observació
+Visualitzar la posició del Sol directament sobre una imatge real del lloc
+Estimar l’hora local de màxima ocultació
+🧭 Funcionalitats principals
+📍 Selecció de posició geogràfica
+Automàtica via EXIF de la foto
+Manual per l’usuari
+🖼️ Càrrega de fotografia del lloc
+Imatge real del punt d’observació
+Imatge de prova integrada
+🧮 Càlcul astronòmic del Sol
+Azimut
+Elevació
+Data i hora local
+☀️ Projecció del Sol sobre la fotografia
+Visualització directa del punt on apareixerà el Sol
+Indicació si queda dins o fora de la imatge
+🧭 Calibratge de la imatge
+Definició de la línia de l’horitzó
+Punt central per ajustar el pitch
+Correcció de rotació (roll)
+🎛️ Ajustos manuals
+Desplaçament del Sol en X/Y
+Graella opcional
+📥 Descàrrega de la imatge final
+Imatge amb el Sol dibuixat
+Llesta per planificació o compartició
+📱 Interfície adaptada a mòbil
+Navegació per passos (tipus app)
+Botons inferiors
+Optimització per pantalles petites
+🕒 Hora de màxima ocultació
 
 A Catalunya, l’eclipsi tindrà lloc aproximadament entre:
 
-**20:15:00 i 20:30:00**
+20:15:00 i 20:30:00
 
 Per consultar punts d’observació i horaris detallats:
 👉 https://eclipsicatalunya.cat/punts-d-observacio/
 
----
+📱 Ús en dispositius mòbils
 
-## 🚀 Execució local
+L’aplicació està optimitzada per a telèfons:
+
+Navegació per passos:
+Imatge → Coordenades → Eclipsi → Ajust → Sol
+La imatge només es mostra on és necessària (millor rendiment)
+Compressió automàtica de fotos grans
+
+⚠️ Recomanació:
+
+Utilitza imatges de menys de ~30 MB
+Millor si són fotos comprimides
+🧪 Mode demo
+
+Inclou una imatge de prova per:
+
+Testar funcionalitats
+Practicar calibratge
+Simular escenaris
+🚀 Execució local
 
 Per executar l’app en local:
 
-```r
 shiny::runApp()
-```
-
----
-
-## 🗂️ Estructura del projecte
-
-```
+🗂️ Estructura del projecte
 .
 ├── app.R
 ├── R/
 ├── www/
 └── README.md
-```
+⚠️ Notes
+L’app està pensada per a ús orientatiu i educatiu.
+La precisió depèn de:
+Qualitat de la fotografia
+Correcta orientació (azimut)
+Paràmetres de càmera (FOV)
+Es recomana validar sempre sobre el terreny.
+☀️ Recomanacions d’observació
+Utilitza ulleres homologades per eclipsi solar
+No miris el Sol directament sense protecció
+Planifica la ubicació amb antelació
+Tingues en compte obstacles com muntanyes o edificis
+Verifica la visibilitat real amb la fotografia
+👤 Autor
 
----
+Desenvolupat per Joan Fibla
 
-## ⚠️ Notes
-
-- L’app està pensada per a ús orientatiu i educatiu.
-- La precisió depèn de la ubicació i dades introduïdes per l’usuari.
-- Es recomana validar sempre sobre el terreny.
-
----
-
-## ☀️ Recomanacions d’observació
-
-- Utilitza **ulleres homologades per eclipsi solar**
-- No miris el Sol directament sense protecció
-- Planifica la ubicació amb antelació
-- Tingues en compte obstacles com muntanyes o edificis
-
----
-
-## 👤 Autor
-
-Desenvolupat per **Joan Fibla**
-
----
-
-## 📜 Llicència MIT
+📜 Llicència MIT
 
 Aquest projecte està sota la llicència MIT.
 
