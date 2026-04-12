@@ -6,7 +6,7 @@ Aplicació Shiny per planificar i visualitzar l’observació de l’eclipsi sol
 
 ## 🌐 Accés a l’aplicació
 
-Pots utilitzar l’app directament des del navegador:
+Pots utilitzar l’app directament des del navegador o el telèfon clicant a l’enllaç següent:
 
 👉 https://genometools.shinyapps.io/Eclips_app/
 
@@ -27,8 +27,9 @@ Eclips’app permet als usuaris:
 ## 🧭 Funcionalitats principals
 
 - 📍 **Selecció de posició geogràfica**
-  - Automàtica via EXIF de la foto
-  - Manual per l’usuari
+  - Automàtica via metadades EXIF de la fotografia (si estan disponibles)
+  - Obtenció directa des del dispositiu (GPS del navegador en mòbil), amb latitud, longitud i altitud quan es proporciona
+  - Introducció manual per part de l’usuari com a alternativa o ajust fi
 
 - 🖼️ **Càrrega de fotografia del lloc**
   - Imatge real del punt d’observació
