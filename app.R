@@ -2,8 +2,10 @@
 # ============================================================
 # Eclips'app responsive
 # - Càrrega EXIF automàtica
+# - Fallback de coordenades via navegador del telèfon
 # - Compressió de fotos grans
 # - Navegació mòbil amb barra inferior
+# - Intro inicial només en obrir l'app al mòbil
 # - Imatge inicial separada del resultat final
 # - Resultat visual persistent i estable a "Sol"
 # ============================================================
@@ -74,6 +76,18 @@ prepare_uploaded_image <- function(path, max_dim = 1800, quality = 85) {
   )
   
   out_path
+}
+
+guess_content_type <- function(path) {
+  ext <- tolower(tools::file_ext(path))
+  switch(
+    ext,
+    jpg = "image/jpeg",
+    jpeg = "image/jpeg",
+    png = "image/png",
+    webp = "image/webp",
+    "image/jpeg"
+  )
 }
 
 # ============================================================
@@ -526,14 +540,15 @@ draw_overlay_image <- function(
   invisible(out_path)
 }
 
-field_box <- function(id, state = c("ok", "missing", "exif"), label, input_tag) {
+field_box <- function(id, state = c("ok", "missing", "exif", "browser"), label, input_tag) {
   state <- match.arg(state)
   
   cls <- switch(
     state,
     ok = "field-ok",
     missing = "field-missing",
-    exif = "field-exif"
+    exif = "field-exif",
+    browser = "field-browser"
   )
   
   div(
@@ -646,6 +661,13 @@ ui <- fluidPage(
         border-color: #64b5f6 !important;
       }
 
+      .field-browser .form-control,
+      .field-browser .selectize-input,
+      .field-browser .shiny-date-input .form-control {
+        background-color: #ede7f6 !important;
+        border-color: #9575cd !important;
+      }
+
       .field-label {
         font-size: 12px;
         font-weight: 600;
@@ -661,6 +683,25 @@ ui <- fluidPage(
         color: #666;
         margin-top: 6px;
         line-height: 1.35;
+      }
+
+      .geo-status {
+        font-size: 12px;
+        line-height: 1.4;
+        margin-top: 8px;
+        white-space: pre-wrap;
+      }
+
+      .geo-status.ok {
+        color: #1b7f3a;
+      }
+
+      .geo-status.warn {
+        color: #9a6b00;
+      }
+
+      .geo-status.err {
+        color: #b3261e;
       }
 
       .section-card .row {
@@ -744,6 +785,68 @@ ui <- fluidPage(
 
       .mobile-photo-only {
         display: none;
+      }
+
+      .mobile-guide-card {
+        background: linear-gradient(180deg, #f4f8ff 0%, #eef6ff 100%);
+        border: 1px solid #cfe0f5;
+        border-radius: 12px;
+        padding: 0;
+        margin-bottom: 14px;
+        overflow: hidden;
+        box-shadow: 0 2px 6px rgba(31, 120, 180, 0.08);
+      }
+
+      .mobile-guide-header {
+        background: #1f78b4;
+        color: white;
+        padding: 10px 12px;
+        font-weight: 700;
+        font-size: 15px;
+      }
+
+      .mobile-guide-body {
+        padding: 12px;
+      }
+
+      .mobile-guide-step {
+        background: white;
+        border: 1px solid #dbe7f3;
+        border-radius: 10px;
+        padding: 10px 12px;
+        margin-bottom: 8px;
+      }
+
+      .mobile-guide-step:last-child {
+        margin-bottom: 0;
+      }
+
+      .mobile-guide-step-title {
+        font-weight: 700;
+        color: #1f4e79;
+        margin-bottom: 3px;
+        font-size: 13px;
+      }
+
+      .mobile-guide-step-text {
+        font-size: 12px;
+        color: #344054;
+        line-height: 1.4;
+      }
+
+      .mobile-guide-nav {
+        margin-top: 10px;
+        background: #fff8e1;
+        border: 1px solid #f2d58a;
+        border-radius: 10px;
+        padding: 10px 12px;
+        font-size: 12px;
+        color: #6b5300;
+        line-height: 1.4;
+      }
+
+      .mobile-start-intro.hidden-by-nav {
+        display: none !important;
       }
 
       .shiny-image-output img {
@@ -889,12 +992,31 @@ ui <- fluidPage(
     
     tags$script(HTML("
       window.currentMobileStep = 'image';
+      window.mobileIntroDismissed = false;
 
       function updateMobileFlag() {
         var isMobile = window.innerWidth <= 991;
         if (window.Shiny) {
           Shiny.setInputValue('is_mobile', isMobile, {priority: 'event'});
         }
+      }
+
+      function updateMobileIntroVisibility() {
+        var isMobile = window.innerWidth <= 991;
+        var introBlocks = document.querySelectorAll('.mobile-start-intro');
+
+        introBlocks.forEach(function(el) {
+          if (!isMobile) {
+            el.classList.add('hidden-by-nav');
+            return;
+          }
+
+          if (window.mobileIntroDismissed) {
+            el.classList.add('hidden-by-nav');
+          } else {
+            el.classList.remove('hidden-by-nav');
+          }
+        });
       }
 
       function setMobileStep(step) {
@@ -917,6 +1039,7 @@ ui <- fluidPage(
           sections.forEach(function(el) {
             el.classList.add('mobile-visible');
           });
+          updateMobileIntroVisibility();
           return;
         }
 
@@ -927,11 +1050,65 @@ ui <- fluidPage(
           }
         });
 
+        updateMobileIntroVisibility();
         window.scrollTo({top: 0, behavior: 'smooth'});
       }
 
+      function dismissMobileIntro() {
+        window.mobileIntroDismissed = true;
+        updateMobileIntroVisibility();
+      }
+
+      Shiny.addCustomMessageHandler('requestBrowserGeolocation', function(message) {
+        if (!navigator.geolocation) {
+          Shiny.setInputValue('browser_geo_result', {
+            ok: false,
+            error: 'Aquest navegador no admet geolocalització.',
+            ts: Date.now()
+          }, {priority: 'event'});
+          return;
+        }
+
+        navigator.geolocation.getCurrentPosition(
+          function(position) {
+            var c = position.coords || {};
+            Shiny.setInputValue('browser_geo_result', {
+              ok: true,
+              lat: c.latitude,
+              lon: c.longitude,
+              alt: c.altitude,
+              accuracy: c.accuracy,
+              altitudeAccuracy: c.altitudeAccuracy,
+              heading: c.heading,
+              speed: c.speed,
+              timestamp: position.timestamp,
+              ts: Date.now()
+            }, {priority: 'event'});
+          },
+          function(error) {
+            var msg = 'No s ha pogut obtenir la ubicació.';
+            if (error && error.code === 1) msg = 'Permís de localització denegat.';
+            if (error && error.code === 2) msg = 'Ubicació no disponible.';
+            if (error && error.code === 3) msg = 'Temps d espera esgotat en obtenir la ubicació.';
+
+            Shiny.setInputValue('browser_geo_result', {
+              ok: false,
+              error: msg,
+              code: error ? error.code : null,
+              ts: Date.now()
+            }, {priority: 'event'});
+          },
+          {
+            enableHighAccuracy: true,
+            timeout: 15000,
+            maximumAge: 0
+          }
+        );
+      });
+
       document.addEventListener('DOMContentLoaded', function() {
         updateMobileFlag();
+        updateMobileIntroVisibility();
         setTimeout(function() {
           setMobileStep(window.currentMobileStep || 'image');
         }, 50);
@@ -939,6 +1116,7 @@ ui <- fluidPage(
 
       window.addEventListener('resize', function() {
         updateMobileFlag();
+        updateMobileIntroVisibility();
         setMobileStep(window.currentMobileStep || 'image');
       });
     "))
@@ -946,7 +1124,8 @@ ui <- fluidPage(
   
   div(class = "title-panel-mobile", titlePanel("🌘 Eclips'app")),
   
-  tags$div(
+  div(
+    class = "desktop-photo-only",
     style = paste(
       "background-color:#f8f9fa;",
       "padding:14px 18px;",
@@ -957,6 +1136,103 @@ ui <- fluidPage(
     tags$p(
       "Aplicació interactiva per orientar l’observació de l’eclipsi solar del 12 d’agost de 2026 i ajudar a preparar millor la visualització i la fotografia des de cada ubicació.",
       style = "margin:0; font-size:15px; color:#444;"
+    )
+  ),
+  
+  div(
+    id = "mobile_intro_top",
+    class = "mobile-photo-only mobile-start-intro",
+    style = paste(
+      "background-color:#f8f9fa;",
+      "padding:12px 14px;",
+      "margin-bottom:12px;",
+      "border:1px solid #ddd;",
+      "border-radius:8px;"
+    ),
+    tags$p(
+      "Aplicació interactiva per orientar l’observació de l’eclipsi solar del 12 d’agost de 2026 i ajudar a preparar millor la visualització i la fotografia des de cada ubicació.",
+      style = "margin:0; font-size:14px; color:#444; line-height:1.4;"
+    )
+  ),
+  
+  div(
+    id = "mobile_intro_guide",
+    class = "mobile-guide-card mobile-photo-only mobile-start-intro",
+    
+    div(
+      class = "mobile-guide-header",
+      "🌘 Com fer servir Eclips'app des del telèfon"
+    ),
+    
+    div(
+      class = "mobile-guide-body",
+      
+      div(
+        class = "mobile-guide-step",
+        div(class = "mobile-guide-step-title", "1. Imatge"),
+        div(
+          class = "mobile-guide-step-text",
+          "Puja una foto del lloc d’observació o fes servir la imatge de prova."
+        )
+      ),
+      
+      div(
+        class = "mobile-guide-step",
+        div(class = "mobile-guide-step-title", "2. Coords"),
+        div(
+          class = "mobile-guide-step-text",
+          HTML(
+            paste0(
+              "Si la foto porta metadades, la posició s’omplirà automàticament. ",
+              "Si no, pots prémer <b>“Obtenir ubicació del dispositiu”</b> ",
+              "o escriure les coordenades manualment."
+            )
+          )
+        )
+      ),
+      
+      div(
+        class = "mobile-guide-step",
+        div(class = "mobile-guide-step-title", "3. Eclipsi"),
+        div(
+          class = "mobile-guide-step-text",
+          "Introdueix l’hora local de màxima ocultació per al teu lloc."
+        )
+      ),
+      
+      div(
+        class = "mobile-guide-step",
+        div(class = "mobile-guide-step-title", "4. Ajust"),
+        div(
+          class = "mobile-guide-step-text",
+          "Si cal, calibra la foto marcant l’horitzó i ajusta petits desplaçaments."
+        )
+      ),
+      
+      div(
+        class = "mobile-guide-step",
+        div(class = "mobile-guide-step-title", "5. Sol"),
+        div(
+          class = "mobile-guide-step-text",
+          HTML(
+            paste0(
+              "Prem <b>“Calcular posició del Sol”</b> ",
+              "per veure la projecció sobre la imatge."
+            )
+          )
+        )
+      ),
+      
+      div(
+        class = "mobile-guide-nav",
+        HTML(
+          paste0(
+            "<b>Navegació:</b> ",
+            "fes servir la barra inferior del mòbil: ",
+            "<b>Imatge · Coords · Eclipsi · Ajust · Sol</b>"
+          )
+        )
+      )
     )
   ),
   
@@ -1020,7 +1296,7 @@ ui <- fluidPage(
         h4(class = "section-title", "2. Localització de la imatge"),
         tags$div(
           class = "help-text-small",
-          "Les dades de localització s'obtenen de les metadates de la imatge, o manualment per l'usuari si no es disposa de metadates."
+          "Les dades de localització s'obtenen de les metadades EXIF de la imatge. Si la foto directa del telèfon no en porta, pots omplir les coordenades manualment o obtenir-les des del navegador del dispositiu."
         ),
         
         splitLayout(
@@ -1059,6 +1335,22 @@ ui <- fluidPage(
             )
           )
         ),
+        
+        div(
+          style = "display:flex; gap:8px; flex-wrap:wrap; margin-top:6px; margin-bottom:6px;",
+          actionButton(
+            "get_browser_location",
+            "📍 Obtenir ubicació del dispositiu",
+            class = "btn-primary"
+          ),
+          actionButton(
+            "clear_browser_location",
+            "Esborrar coordenades",
+            class = "btn-default"
+          )
+        ),
+        
+        uiOutput("browser_geo_status_ui"),
         
         tags$hr(),
         verbatimTextOutput("exif_info")
@@ -1289,7 +1581,7 @@ ui <- fluidPage(
         id = "nav_image",
         type = "button",
         class = "mobile-nav-btn active",
-        onclick = "setMobileStep('image')",
+        onclick = "dismissMobileIntro(); setMobileStep('image')",
         icon("image"),
         tags$span("Imatge")
       ),
@@ -1297,7 +1589,7 @@ ui <- fluidPage(
         id = "nav_coords",
         type = "button",
         class = "mobile-nav-btn",
-        onclick = "setMobileStep('coords')",
+        onclick = "dismissMobileIntro(); setMobileStep('coords')",
         icon("map-marker-alt"),
         tags$span("Coords")
       ),
@@ -1305,7 +1597,7 @@ ui <- fluidPage(
         id = "nav_eclipse",
         type = "button",
         class = "mobile-nav-btn",
-        onclick = "setMobileStep('eclipse')",
+        onclick = "dismissMobileIntro(); setMobileStep('eclipse')",
         icon("moon"),
         tags$span("Eclipsi")
       ),
@@ -1313,7 +1605,7 @@ ui <- fluidPage(
         id = "nav_adjust",
         type = "button",
         class = "mobile-nav-btn",
-        onclick = "setMobileStep('adjust')",
+        onclick = "dismissMobileIntro(); setMobileStep('adjust')",
         icon("sliders-h"),
         tags$span("Ajust")
       ),
@@ -1321,7 +1613,7 @@ ui <- fluidPage(
         id = "nav_sol",
         type = "button",
         class = "mobile-nav-btn",
-        onclick = "setMobileStep('sol')",
+        onclick = "dismissMobileIntro(); setMobileStep('sol')",
         icon("sun"),
         tags$span("Sol")
       )
@@ -1350,6 +1642,7 @@ server <- function(input, output, session) {
     exif = NULL,
     demo_mode = FALSE,
     result_img = NULL,
+    browser_geo = NULL,
     field_state = list(
       lat = "missing",
       lon = "missing",
@@ -1380,12 +1673,61 @@ server <- function(input, output, session) {
     shinyjs::removeClass(selector = paste0("#", id, "_box"), class = "field-ok")
     shinyjs::removeClass(selector = paste0("#", id, "_box"), class = "field-missing")
     shinyjs::removeClass(selector = paste0("#", id, "_box"), class = "field-exif")
+    shinyjs::removeClass(selector = paste0("#", id, "_box"), class = "field-browser")
     shinyjs::addClass(selector = paste0("#", id, "_box"), class = paste0("field-", state))
   }
   
   has_num <- function(x) is.numeric(x) && length(x) == 1 && !is.na(x)
   has_txt <- function(x) is.character(x) && length(x) == 1 && nzchar(trimws(x))
   has_date <- function(x) !is.null(x) && !is.na(x)
+  
+  browser_geo_status <- reactiveVal(NULL)
+  
+  set_location_inputs <- function(lat = NA, lon = NA, elev = NA) {
+    as_scalar_num_or_na <- function(x, digits = NULL) {
+      if (is.null(x) || length(x) == 0) return(NA_real_)
+      x <- suppressWarnings(as.numeric(x[1]))
+      if (!is.finite(x)) return(NA_real_)
+      if (!is.null(digits)) x <- round(x, digits)
+      x
+    }
+    
+    lat_val  <- as_scalar_num_or_na(lat, digits = 6)
+    lon_val  <- as_scalar_num_or_na(lon, digits = 6)
+    elev_val <- as_scalar_num_or_na(elev, digits = 1)
+    
+    updateNumericInput(session, "lat", value = lat_val)
+    updateNumericInput(session, "lon", value = lon_val)
+    updateNumericInput(session, "elev", value = elev_val)
+  }
+  
+  set_location_state_from_source <- function(lat, lon, elev, source = c("manual", "exif", "browser")) {
+    source <- match.arg(source)
+    state_name <- switch(
+      source,
+      exif = "exif",
+      browser = "browser",
+      manual = "ok"
+    )
+    
+    if (!is.na(lat)) {
+      set_field_state("lat", state_name)
+    } else {
+      set_field_state("lat", "missing")
+    }
+    
+    if (!is.na(lon)) {
+      set_field_state("lon", state_name)
+    } else {
+      set_field_state("lon", "missing")
+    }
+    
+    if (!is.na(elev)) {
+      set_field_state("elev", state_name)
+    } else {
+      set_field_state("elev", "missing")
+    }
+  }
   
   observe({
     ids <- c("lat", "lon", "elev", "calc_date", "calc_time", "calc_tz", "photo_az", "pitch", "hfov", "vfov")
@@ -1436,6 +1778,7 @@ server <- function(input, output, session) {
     }
     
     rv$demo_mode <- FALSE
+    rv$browser_geo <- NULL
     
     exif_sum <- read_photo_exif_summary(input$photo$datapath)
     rv$exif <- exif_sum
@@ -1463,28 +1806,36 @@ server <- function(input, output, session) {
     rv$active_img <- prepared_img
     rv$dims <- read_image_dims(rv$active_img)
     
-    if (!is.na(exif_sum$lat)) {
-      updateNumericInput(session, "lat", value = round(exif_sum$lat, 6))
-      set_field_state("lat", "exif")
+    if (!is.na(exif_sum$lat) || !is.na(exif_sum$lon) || !is.na(exif_sum$elev)) {
+      set_location_inputs(
+        lat = if (!is.na(exif_sum$lat)) exif_sum$lat else NA,
+        lon = if (!is.na(exif_sum$lon)) exif_sum$lon else NA,
+        elev = if (!is.na(exif_sum$elev)) exif_sum$elev else NA
+      )
+      set_location_state_from_source(
+        lat = exif_sum$lat,
+        lon = exif_sum$lon,
+        elev = exif_sum$elev,
+        source = "exif"
+      )
     } else {
-      updateNumericInput(session, "lat", value = NA)
-      set_field_state("lat", "missing")
+      set_location_inputs(lat = NA, lon = NA, elev = NA)
+      set_location_state_from_source(NA, NA, NA, source = "manual")
     }
     
-    if (!is.na(exif_sum$lon)) {
-      updateNumericInput(session, "lon", value = round(exif_sum$lon, 6))
-      set_field_state("lon", "exif")
+    if (!is.na(exif_sum$lat) && !is.na(exif_sum$lon)) {
+      browser_geo_status(list(
+        type = "ok",
+        text = "Coordenades carregades des de les metadades EXIF de la imatge."
+      ))
     } else {
-      updateNumericInput(session, "lon", value = NA)
-      set_field_state("lon", "missing")
-    }
-    
-    if (!is.na(exif_sum$elev)) {
-      updateNumericInput(session, "elev", value = round(exif_sum$elev, 1))
-      set_field_state("elev", "exif")
-    } else {
-      updateNumericInput(session, "elev", value = NA)
-      set_field_state("elev", "missing")
+      browser_geo_status(list(
+        type = "warn",
+        text = paste(
+          "La foto no conté coordenades EXIF útils.",
+          "Pots omplir-les manualment o prémer 'Obtenir ubicació del dispositiu'."
+        )
+      ))
     }
     
     showNotification(
@@ -1502,6 +1853,112 @@ server <- function(input, output, session) {
     }
   })
   
+  observeEvent(input$get_browser_location, {
+    browser_geo_status(list(
+      type = "warn",
+      text = "S'està sol·licitant la ubicació del dispositiu..."
+    ))
+    
+    session$sendCustomMessage("requestBrowserGeolocation", list())
+  })
+  
+  observeEvent(input$browser_geo_result, {
+    res <- input$browser_geo_result
+    req(is.list(res))
+    
+    get_num_or_na <- function(x, digits = NULL) {
+      if (is.null(x) || length(x) == 0) return(NA_real_)
+      x <- suppressWarnings(as.numeric(x[1]))
+      if (!is.finite(x)) return(NA_real_)
+      if (!is.null(digits)) x <- round(x, digits)
+      x
+    }
+    
+    if (!isTRUE(res$ok)) {
+      browser_geo_status(list(
+        type = "err",
+        text = if (!is.null(res$error) && nzchar(as.character(res$error))) {
+          as.character(res$error)
+        } else {
+          "No s'ha pogut obtenir la ubicació del dispositiu."
+        }
+      ))
+      return()
+    }
+    
+    lat_val <- get_num_or_na(res$lat, digits = 6)
+    lon_val <- get_num_or_na(res$lon, digits = 6)
+    elev_val <- get_num_or_na(res$alt, digits = 1)
+    acc_val <- get_num_or_na(res$accuracy, digits = 1)
+    alt_acc_val <- get_num_or_na(res$altitudeAccuracy, digits = 1)
+    
+    set_location_inputs(
+      lat = lat_val,
+      lon = lon_val,
+      elev = elev_val
+    )
+    
+    set_location_state_from_source(
+      lat = lat_val,
+      lon = lon_val,
+      elev = elev_val,
+      source = "browser"
+    )
+    
+    rv$browser_geo <- list(
+      lat = lat_val,
+      lon = lon_val,
+      elev = elev_val,
+      accuracy = acc_val,
+      altitudeAccuracy = alt_acc_val,
+      timestamp = if (!is.null(res$timestamp) && length(res$timestamp) > 0) res$timestamp[[1]] else NA
+    )
+    
+    msg <- paste0(
+      "Ubicació obtinguda des del dispositiu. ",
+      "Latitud i longitud actualitzades"
+    )
+    
+    if (!is.na(elev_val)) {
+      msg <- paste0(msg, " i altitud disponible")
+    } else {
+      msg <- paste0(msg, ". El dispositiu no ha proporcionat altitud")
+    }
+    
+    if (!is.na(acc_val)) {
+      msg <- paste0(msg, ". Precisió aproximada: ±", acc_val, " m")
+    }
+    
+    if (!is.na(alt_acc_val)) {
+      msg <- paste0(msg, ". Precisió altitud: ±", alt_acc_val, " m")
+    }
+    
+    msg <- paste0(msg, ".")
+    
+    browser_geo_status(list(
+      type = "ok",
+      text = msg
+    ))
+    
+    showNotification(
+      "Ubicació del dispositiu aplicada als camps de coordenades.",
+      type = "message",
+      duration = 4
+    )
+  })
+  
+  observeEvent(input$clear_browser_location, {
+    rv$browser_geo <- NULL
+    
+    set_location_inputs(lat = NA, lon = NA, elev = NA)
+    set_location_state_from_source(NA, NA, NA, source = "manual")
+    
+    browser_geo_status(list(
+      type = "warn",
+      text = "Coordenades esborrades."
+    ))
+  })
+  
   observeEvent(input$use_demo_btn, {
     tmp_demo <- tempfile(fileext = ".png")
     create_demo_image(tmp_demo)
@@ -1512,6 +1969,7 @@ server <- function(input, output, session) {
     rv$active_img <- tmp_demo
     rv$dims <- read_image_dims(rv$active_img)
     rv$exif <- NULL
+    rv$browser_geo <- NULL
     
     updateNumericInput(session, "lat", value = 41.470000)
     updateNumericInput(session, "lon", value = 1.020000)
@@ -1523,23 +1981,28 @@ server <- function(input, output, session) {
     set_field_state("elev", "ok")
     set_field_state("photo_az", "ok")
     
+    browser_geo_status(list(
+      type = "ok",
+      text = "Mode demo actiu. Coordenades de prova carregades."
+    ))
+    
     if (isTRUE(input$is_mobile)) {
       runjs("setMobileStep('image');")
     }
   })
   
   observeEvent(input$lat, {
-    if (has_num(input$lat) && rv$field_state$lat != "exif") set_field_state("lat", "ok")
+    if (has_num(input$lat) && !rv$field_state$lat %in% c("exif", "browser")) set_field_state("lat", "ok")
     if (!has_num(input$lat)) set_field_state("lat", "missing")
   }, ignoreInit = TRUE)
   
   observeEvent(input$lon, {
-    if (has_num(input$lon) && rv$field_state$lon != "exif") set_field_state("lon", "ok")
+    if (has_num(input$lon) && !rv$field_state$lon %in% c("exif", "browser")) set_field_state("lon", "ok")
     if (!has_num(input$lon)) set_field_state("lon", "missing")
   }, ignoreInit = TRUE)
   
   observeEvent(input$elev, {
-    if (has_num(input$elev) && rv$field_state$elev != "exif") set_field_state("elev", "ok")
+    if (has_num(input$elev) && !rv$field_state$elev %in% c("exif", "browser")) set_field_state("elev", "ok")
     if (!has_num(input$elev)) set_field_state("elev", "missing")
   }, ignoreInit = TRUE)
   
@@ -1857,7 +2320,7 @@ server <- function(input, output, session) {
     
     list(
       src = normalizePath(rv$active_img),
-      contentType = "image/jpeg",
+      contentType = guess_content_type(rv$active_img),
       alt = "Imatge inicial"
     )
   }, deleteFile = FALSE)
@@ -1872,7 +2335,7 @@ server <- function(input, output, session) {
     
     list(
       src = normalizePath(rv$active_img),
-      contentType = "image/jpeg",
+      contentType = guess_content_type(rv$active_img),
       alt = "Imatge inicial"
     )
   }, deleteFile = FALSE)
@@ -1961,6 +2424,28 @@ server <- function(input, output, session) {
         tags$span(style = "color:#c62828; font-weight:600;", "La posició final ajustada és fora de la imatge.")
       }
     )
+  })
+  
+  output$browser_geo_status_ui <- renderUI({
+    st <- browser_geo_status()
+    
+    if (is.null(st) || is.null(st$text) || !nzchar(trimws(as.character(st$text)))) {
+      return(
+        tags$div(
+          class = "geo-status warn",
+          "Encara no s'ha obtingut cap ubicació del dispositiu."
+        )
+      )
+    }
+    
+    cls <- switch(
+      st$type,
+      ok = "geo-status ok",
+      err = "geo-status err",
+      "geo-status warn"
+    )
+    
+    tags$div(class = cls, st$text)
   })
   
   output$exif_info <- renderText({
