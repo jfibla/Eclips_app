@@ -145,6 +145,7 @@ shiny::runApp()
 ## 👤 Autor
 
 Desenvolupat per **Joan Fibla**
+Part del codi i de les adaptacions d’aquesta aplicació s’han desenvolupat amb l’ajuda de ChatGPT (OpenAI), sota supervisió i validació de l’autor.
 
 ---
 
