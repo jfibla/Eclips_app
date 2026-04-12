@@ -38,18 +38,18 @@ Eclips’app permet als usuaris:
 - 🧮 **Càlcul astronòmic del Sol**
   - Azimut
   - Elevació
-  - Data i hora local
+  - Data i hora local del màxim del eclipsi
 
 - ☀️ **Projecció del Sol sobre la fotografia**
   - Visualització directa del punt on apareixerà el Sol
   - Indicació si queda dins o fora de la imatge
 
-- 🧭 **Calibratge de la imatge**
+- 🧭 **Calibratge de la imatge** (opcional)
   - Definició de la línia de l’horitzó
   - Punt central per ajustar el pitch
   - Correcció de rotació (roll)
 
-- 🎛️ **Ajustos manuals**
+- 🎛️ **Ajustos manuals** (opcional)
   - Desplaçament del Sol en X/Y
   - Graella opcional
 
@@ -75,18 +75,9 @@ Per consultar punts d’observació i horaris detallats:
 
 ---
 
-## 📱 Ús en dispositius mòbils
-
-L’aplicació està optimitzada per a telèfons:
-
-- Navegació per passos:
-  - Imatge → Coordenades → Eclipsi → Ajust → Sol
-- La imatge només es mostra on és necessària (millor rendiment)
-- Compressió automàtica de fotos grans
-
 ⚠️ Recomanació:
-- Utilitza imatges de menys de ~30 MB
-- Millor si són fotos comprimides
+- Es recomana utilitzar imatges de menys de ~30 MB per evitar errors de càrrega, especialment en mòbil  
+- L’aplicació redueix automàticament la mida de la imatge per optimitzar el rendiment  
 
 ---
 
@@ -102,7 +93,7 @@ Inclou una imatge de prova per:
 
 ## 🚀 Execució local
 
-Per executar l’app en local:
+Per executar l’app en local des de codi R:
 
 ```r
 shiny::runApp()
